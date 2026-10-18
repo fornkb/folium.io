@@ -5,7 +5,7 @@ A premium, minimal local web application that turns uploaded course PDFs into a 
 
 ## Checkpoints
 1. [x] Product scope, architecture, repository instructions, and acceptance criteria.
-2. [ ] Persistent backend: courses, PDF ingestion, editable outline, Gemini generation, resumable jobs, citations, scoring, notes, flashcards, backup.
+2. [x] Persistent backend: courses, PDF ingestion, editable outline, Gemini generation, resumable jobs, citations, scoring, notes, flashcards, backup.
 3. [ ] Complete interface: library, graph/outline, lesson reader, practice, PYQs, revision, saved items, settings, upload/review flow.
 4. [ ] Integration and polish: sample course with real local sources, automated verification, browser verification, responsive/accessibility fixes, launch instructions.
 
@@ -37,3 +37,7 @@ Warm ivory background, forest-green accents, ink text, serif display typography,
 
 ## Deliberate first-version limits
 Text-based PDFs first; image-only scans require OCR before upload. No live tutor chat, automatic subjective marks, native PPT ingestion, full exam prediction, collaboration accounts, or cloud hosting. Generated material is study assistance; validation checks source locations and structure, not mathematical truth or semantic entailment.
+
+## Checkpoint evidence
+- Backend: 19 passing unit/integration checks cover persistent provider caching, resume without regenerated modules, PDF text extraction/deduplication, citation validation, quiz grading, mastery separation, revision scheduling, safe backup round trips, loopback request protection, and no provider calls during study.
+- The sample course includes original illustrative PDF sources with verified physical page mappings. It is not a real past examination.
