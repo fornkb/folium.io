@@ -1,0 +1,39 @@
+# Folium implementation plan
+
+## Agreed outcome
+A premium, minimal local web application that turns uploaded course PDFs into a saved, source-linked learning package. Generate once, study repeatedly without further AI calls. Gemini free-tier limits pause preparation gracefully. This prototype is a personal workspace, with export/import for sharing courses; it is not a multi-user hosted service.
+
+## Checkpoints
+1. [x] Product scope, architecture, repository instructions, and acceptance criteria.
+2. [ ] Persistent backend: courses, PDF ingestion, editable outline, Gemini generation, resumable jobs, citations, scoring, notes, flashcards, backup.
+3. [ ] Complete interface: library, graph/outline, lesson reader, practice, PYQs, revision, saved items, settings, upload/review flow.
+4. [ ] Integration and polish: sample course with real local sources, automated verification, browser verification, responsive/accessibility fixes, launch instructions.
+
+## Data model
+- Course records hold metadata, editable modules/topics/prerequisites, stage, errors, and provenance.
+- Documents store original PDF bytes and extracted text per physical PDF page. Content hashes prevent duplicate uploads within a course.
+- Each generated module package holds detailed lesson sections, bounded flow diagrams, objective and subjective questions, flashcards, source references, and coverage notes.
+- A per-prompt response cache survives interruption between a provider response and later processing.
+- Study progress, quiz attempts, notes, bookmarks, and card schedules are persistent user state separate from generated course content.
+- ZIP backups contain a versioned course manifest and source PDFs; credentials are never included.
+
+## Generation flow
+Upload -> extract local PDF text -> explicitly request outline -> review/edit outline -> explicitly generate packages -> map PYQ pages -> ready.
+
+Outline generation uses the syllabus first, or representative learning pages when no syllabus is provided. Module generation retrieves relevant pages locally and uses a constrained JSON response schema. Stored citations are accepted only if their source page was included in that request. Diagram nodes contain text only. PYQ mapping retains exact extracted question text and source metadata. Jobs run sequentially with a configurable interval; transient quota errors pause with a retry hint. Restarting the server marks unfinished jobs as paused. Resume skips persisted outputs.
+
+## UI direction
+Warm ivory background, forest-green accents, ink text, serif display typography, system sans-serif body, fine borders, ample whitespace, and compact purposeful motion. Main navigation: My courses, Revision, Saved, Settings. Module click opens a dedicated full-page learning workspace. No marketing landing page or decorative AI chat panel.
+
+## Acceptance criteria
+- Sample course works end to end without a key or internet access.
+- Uploaded text PDFs persist and can be opened to their cited physical page.
+- Outline is editable before generation, and prerequisites cannot form cycles.
+- Completed content is reused on reload/resume; studying and scoring use no provider calls.
+- Objective grading is deterministic on the server; subjective questions offer saved solutions without automated marking.
+- Errors explain missing keys, unreadable scans, bad provider output, quota exhaustion, and interrupted jobs.
+- Export/import preserves content and study state without importing paths or credentials.
+- Core flows work with a keyboard and at desktop/mobile widths.
+
+## Deliberate first-version limits
+Text-based PDFs first; image-only scans require OCR before upload. No live tutor chat, automatic subjective marks, native PPT ingestion, full exam prediction, collaboration accounts, or cloud hosting. Generated material is study assistance; validation checks source locations and structure, not mathematical truth or semantic entailment.
