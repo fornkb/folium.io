@@ -131,6 +131,15 @@ class CoreTests(unittest.TestCase):
         restored=self.store.import_course(self.store.export(self.course["id"]))
         self.assertEqual("outline",restored["status"])
 
+    def test_import_rejects_bad_history_before_saving(self):
+        self.course.update(modules=[self.module()],status="ready")
+        self.course["modules"][0]["attempts"]=[dict(correct="wrong",total=4)]
+        self.store.save(self.course)
+        count=len(self.store.courses())
+        with self.assertRaisesRegex(ValueError,"practice score"):
+            self.store.import_course(self.store.export(self.course["id"]))
+        self.assertEqual(count,len(self.store.courses()))
+
     def test_retrieval_keeps_physical_page_metadata(self):
         selected = source_pages([self.doc], "binary search trees", budget=1500)
         self.assertTrue(selected)
@@ -147,6 +156,8 @@ class CoreTests(unittest.TestCase):
             value = provider.generate("one prompt", {"type":"OBJECT"})
             self.assertTrue(value["ok"])
             self.assertEqual(1, request.call_count)
+        self.store.close()
+        self.store=Store(self.temp.name)
         # A new provider instance must use the durable response without any network call.
         with patch("urllib.request.urlopen", side_effect=AssertionError("Unexpected API call")):
             self.assertEqual(value, Gemini(self.store, settings).generate("one prompt", {"type":"OBJECT"}))

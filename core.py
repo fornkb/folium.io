@@ -199,6 +199,34 @@ class Store:
                     if pkg:
                         validate_package(pkg, allowed)
                         module["package"] = pkg
+                module_ids = {m["id"] for m in modules}
+                pyqs = original.get("pyqs", [])
+                if not isinstance(pyqs,list):
+                    raise ValueError("Invalid past-paper questions in backup.")
+                for question in pyqs:
+                    if not isinstance(question,dict) or not isinstance(question.get("question"),str) or (question.get("doc_id"),question.get("page")) not in allowed or not isinstance(question.get("module_ids"),list) or any(mid not in module_ids for mid in question["module_ids"]):
+                        raise ValueError("A past-paper reference in this backup is invalid.")
+                reviews = original.get("reviews", {})
+                if not isinstance(reviews,dict):
+                    raise ValueError("Invalid review history in backup.")
+                for key,review in reviews.items():
+                    if not isinstance(review,dict) or type(review.get("interval")) is not int or not 0 <= review["interval"] <= 60:
+                        raise ValueError("Invalid review schedule in backup.")
+                    try:
+                        parsed = datetime.fromisoformat(review["due"])
+                        if parsed.tzinfo is None:
+                            raise ValueError()
+                    except (KeyError,TypeError,ValueError):
+                        raise ValueError("Invalid review date in backup.") from None
+                for old in original["modules"]:
+                    if not isinstance(old.get("notes",""),str) or len(old.get("notes","")) > 30000:
+                        raise ValueError("Invalid personal notes in backup.")
+                    attempts = old.get("attempts", [])
+                    if not isinstance(attempts,list) or len(attempts)>30:
+                        raise ValueError("Invalid practice history in backup.")
+                    for attempt in attempts:
+                        if not isinstance(attempt,dict) or type(attempt.get("total")) is not int or type(attempt.get("correct")) is not int or not 1 <= attempt["total"] <= 100 or not 0 <= attempt["correct"] <= attempt["total"]:
+                            raise ValueError("Invalid practice score in backup.")
                 def remap(obj):
                     if isinstance(obj, dict):
                         return {k: id_map.get(v, v) if k == "doc_id" else remap(v) for k,v in obj.items()}
@@ -206,8 +234,8 @@ class Store:
                         return [remap(v) for v in obj]
                     return obj
                 course = self.create(original.get("title", "Imported course"), original.get("description", ""))
-                course.update(modules=remap(modules), pyqs=remap(original.get("pyqs", [])),
-                              reviews=original.get("reviews", {}), demo=bool(original.get("demo", False)))
+                course.update(modules=remap(modules), pyqs=remap(pyqs),
+                              reviews=reviews, demo=bool(original.get("demo", False)))
                 for module, old in zip(course["modules"], original["modules"]):
                     for field in ("read", "bookmarked", "notes", "attempts"):
                         if field in old:

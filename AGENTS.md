@@ -14,7 +14,7 @@ This is the local-first Folium study app. The parent project's `sources/` and sy
 - The sample course is explicitly labeled and requires no key.
 
 ## Implementation
-- Python 3.10+ local server, SQLite, local files, pypdf, and buildless HTML/CSS/JavaScript. Bind to loopback only.
+- Python 3.10+ local server, SQLite, local files, pypdf, PDFium/Pillow page previews, and buildless HTML/CSS/JavaScript. Bind to loopback only.
 - Do not introduce hosted services, paid APIs, telemetry, remote fonts, or runtime CDN dependencies.
 - Accessible keyboard navigation, responsive layouts, readable lessons, restrained colors, and clear loading/error/empty states.
 - Validate model JSON on the server and escape all generated/user text in the browser. Do not render arbitrary AI HTML.

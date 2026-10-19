@@ -7,7 +7,7 @@ A premium, minimal local web application that turns uploaded course PDFs into a 
 1. [x] Product scope, architecture, repository instructions, and acceptance criteria.
 2. [x] Persistent backend: courses, PDF ingestion, editable outline, Gemini generation, resumable jobs, citations, scoring, notes, flashcards, backup.
 3. [x] Complete interface: library, graph/outline, lesson reader, practice, PYQs, revision, saved items, settings, upload/review flow.
-4. [ ] Integration and polish: sample course with real local sources, automated verification, browser verification, responsive/accessibility fixes, launch instructions.
+4. [x] Integration and polish: sample course with real local sources, automated verification, browser verification, responsive/accessibility fixes, launch instructions.
 
 ## Data model
 - Course records hold metadata, editable modules/topics/prerequisites, stage, errors, and provenance.
@@ -42,3 +42,4 @@ Text-based PDFs first; image-only scans require OCR before upload. No live tutor
 - Backend: 19 passing unit/integration checks cover persistent provider caching, resume without regenerated modules, PDF text extraction/deduplication, citation validation, quiz grading, mastery separation, revision scheduling, safe backup round trips, loopback request protection, and no provider calls during study.
 - The sample course includes original illustrative PDF sources with verified physical page mappings. It is not a real past examination.
 - Interface checkpoint: complete local library, prerequisite graph, outline and source library, lesson reader with flow diagrams, question interfaces, saved modules, notes, revision, connection settings, and upload/outline editing. PDF page previews render locally to avoid browser plug-in dependence. All 24 backend/integration checks pass, including upload-to-study with a simulated provider and actual PDF rendering.
+- Final checkpoint: 25 automated checks pass; JavaScript syntax and whitespace checks pass. Browser checks cover upload, outline editing, study/practice, notes/reload, cards, search/bookmarks, source image/text/page navigation, backup round trips, dark appearance, keyboard skip navigation, and a 390-pixel lesson layout. See VERIFICATION.md. Live Gemini inference remains untested because no real key was supplied.
