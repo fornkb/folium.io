@@ -3,7 +3,11 @@
 ## Automated checks
 Run: `python -m unittest discover -s tests -v`.
 
-Latest result: **41 tests passed**. The teaching-depth checkpoint adds order-independent document sampling, Unicode recovery with a pre-migration database backup, required-topic plan validation, independent lesson resumption, preserved packages on course extension, and unique-question assessment evidence.
+Latest result: **44 Python tests passed**, plus the Node reader suite. The teaching-depth checkpoint adds order-independent document sampling, Unicode recovery with a pre-migration database backup, required-topic plan validation, independent lesson resumption (including backup/import), preserved packages on course extension, unique-question assessment evidence, atomic/idempotent content corrections, and a numerical check of the teleportation correction orders.
+
+The reader suite checks Markdown headings, mixed lists, tables, step spacing, offline fraction/matrix typesetting, escaping of HTML/script payloads, rejection of unsafe math links, and canonical answer indices under shuffled presentation.
+
+Follow-up browser checks use an isolated copy of the real course: full-map fit, real long module titles, source page 5's formerly broken Unicode text, shuffled options, topic filtering, correct subset scoring and first-encounter tracking, backed-up course extension, and the reader at 390 pixels without horizontal overflow. No browser warnings/errors were observed in these flows. The user's course history is untouched by QA.
 
 The suite covers local PDF extraction, upload deduplication and rollback, prerequisite validation, source-page validation, practice answer keys and scoring, reading versus mastery, flashcard schedules, durable provider caching after reopening storage, quota handling, interrupted-job recovery, generation resumption without repeating completed modules, backup export/import and state validation, secret exclusion, and cross-origin write rejection.
 

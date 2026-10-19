@@ -67,6 +67,10 @@ class TeachingTests(unittest.TestCase):
             fake=Fake(); jobs=Jobs(store,fake)
             with self.assertRaises(ProviderError):jobs._packages(course["id"])
             self.assertIn("l1",store.course(course["id"])["modules"][0]["preparation"]["lessons"])
+            restored=store.import_course(store.export(course["id"]))
+            restored_ref=restored["modules"][0]["preparation"]["lessons"]["l1"]["sections"][0]["sources"][0]
+            self.assertNotEqual(doc["id"],restored_ref["doc_id"])
+            self.assertEqual(store.docs(restored["id"])[0]["id"],restored_ref["doc_id"])
             fake.fail=False
             jobs._packages(course["id"])
             self.assertEqual(["plan","A","B","B"],fake.calls)
@@ -74,6 +78,35 @@ class TeachingTests(unittest.TestCase):
             self.assertEqual(2,len(module["package"]["coverage_map"]))
             self.assertEqual(len(module["package"]["questions"]),len({q["id"] for q in module["package"]["questions"]}))
             store.close()
+
+    def test_reviewed_corrections_are_atomic_backed_up_and_idempotent(self):
+        from repairs import apply_corrections
+        with test_directory() as folder:
+            store=Store(folder);c=store.create("Corrections")
+            root=Path(__file__).resolve().parents[1]
+            doc=store.add_pdf(c["id"],"notes.pdf","material",(root/"sample_sources/Course-notes.pdf").read_bytes())
+            pkg=sample_package(SPECS[0],doc["id"],1)
+            c["modules"]=[dict(id="m1",title="Saved",topics=["A"],prerequisites=[],package=pkg,notes="Keep")];store.save(c)
+            question=pkg["questions"][0]
+            patch=dict(id="review-1",message="Clarify wording",modules=[dict(id="m1",questions=[dict(id=question["id"],expected_question="Stale wording",updates=dict(question="Clearer question"))])])
+            with self.assertRaisesRegex(ValueError,"changed since"):apply_corrections(store,c["id"],patch)
+            self.assertEqual(c["modules"],store.course(c["id"])["modules"])
+            patch["modules"][0]["questions"][0]["expected_question"]=question["question"]
+            result=apply_corrections(store,c["id"],patch)
+            self.assertEqual("Keep",result["modules"][0]["notes"])
+            self.assertEqual("Clearer question",result["modules"][0]["package"]["questions"][0]["question"])
+            apply_corrections(store,c["id"],patch)
+            self.assertEqual(1,len(list((Path(folder)/"backups").glob("*.zip"))))
+            store.close()
+
+    def test_pauli_orders_for_teleportation_differ_only_by_global_phase(self):
+        # The wrong assessment treated -|psi> as a different physical state.
+        def x(v):return (v[1],v[0])
+        def z(v):return (v[0],-v[1])
+        psi=(.6,.8);bob=x(z(psi))
+        self.assertEqual(psi,z(x(bob)))
+        self.assertEqual(tuple(-a for a in psi),x(z(bob)))
+        self.assertEqual([a*a for a in z(x(bob))],[a*a for a in x(z(bob))])
 
     def test_repeated_bank_does_not_increase_unique_evidence(self):
         module=dict(topics=["A"],package=dict(questions=[dict(id=f"q{i}",type="objective",question=f"Question {i}",options=["a","b"],correct_index=0,solution="a",topic="A") for i in range(8)]))

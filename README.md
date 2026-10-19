@@ -54,3 +54,7 @@ Every readable material file receives a reserved outline excerpt budget, and new
 Malformed PDF glyphs are normalized locally while valid mathematical Unicode is preserved. Existing extracted text is backed up before its one-time repair. Some symbols still require consulting the original PDF page; image-only scans still require OCR.
 
 Practice progress distinguishes unique first encounters from repeated answers. Repeating a small saved bank does not establish mastery. Strong recall requires at least 12 distinct questions, topic coverage and strong first-encounter/recent results; this remains an estimate within the saved bank.
+
+The reader supports safe Markdown and locally bundled KaTeX mathematics, with no CDN or remote font dependency. Older plain-text/Unicode formulas remain as originally saved; LaTeX typesetting is used when mathematical delimiters are present. Graph controls fit the whole map, zoom, pan, and expand it. Practice can focus on a topic, and question/option order is shuffled while server scoring keeps the original answer indices.
+
+Reviewed source clarifications can accompany original pages and new generation. They are labeled separately from uploaded notes. `tools/apply_corrections.py` applies a reviewed local JSON patch only when the expected original question/section still matches, backs up the course first, and records the correction. This does not automatically establish factual correctness for all generated content.

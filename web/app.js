@@ -2,7 +2,7 @@ import * as UI from './ui.js';
 const {esc,icon,link,enc}=UI;
 const $=(s,root=document)=>root.querySelector(s);
 const $$=(s,root=document)=>[...root.querySelectorAll(s)];
-const state={courses:[],settings:{has_key:false,model:'gemini-3.8-flash',interval:6},view:'graph',zoom:1,
+const state={courses:[],settings:{has_key:false,model:'gemini-3.8-flash',interval:6},view:'graph',zoom:null,
   files:[],draft:[],draftCid:null,review:null,quizzes:{},theme:localStorage.getItem('folium-theme')||'light',
   current:{},allowPrepared:null,previousRoute:'',notesPending:null};
 let toastTimer,notesTimer,lastFocus;
@@ -20,7 +20,17 @@ function toast(text,error=false){const el=$('#toast');clearTimeout(toastTimer);e
 function route(){return (location.hash.replace(/^#\/?/,'')||'').split('/').map(decodeURIComponent);}
 function goto(path){if(location.hash===path){render();window.scrollTo(0,0);}else location.hash=path;}
 const quizKey=(c,m)=>`${c.id}:${m.id}`;
-function getQuiz(c,m){const key=quizKey(c,m);if(!state.quizzes[key]){try{state.quizzes[key]=JSON.parse(sessionStorage.getItem('folium-quiz-'+key))||{answers:{}};}catch{state.quizzes[key]={answers:{}};}}return state.quizzes[key];}
+function shuffle(items){const result=[...items];for(let i=result.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[result[i],result[j]]=[result[j],result[i]];}return result;}
+function newQuiz(m,topic=''){
+  const bank=m.package.questions.filter(q=>q.type==='objective'&&(!topic||q.topic===topic));
+  return {answers:{},topic,signature:JSON.stringify(m.package.questions),order:shuffle(bank.map(q=>q.id)),options:Object.fromEntries(bank.map(q=>[q.id,shuffle(q.options.map((_,i)=>i))]))};
+}
+function getQuiz(c,m){
+  const key=quizKey(c,m);
+  if(!state.quizzes[key]){try{state.quizzes[key]=JSON.parse(sessionStorage.getItem('folium-quiz-'+key));}catch{}}
+  if(!state.quizzes[key]||state.quizzes[key].signature!==JSON.stringify(m.package.questions))state.quizzes[key]=newQuiz(m);
+  return state.quizzes[key];
+}
 function saveQuiz(c,m){sessionStorage.setItem('folium-quiz-'+quizKey(c,m),JSON.stringify(state.quizzes[quizKey(c,m)]));}
 function brand(){return `<a class="brand" href="#/" aria-label="Folium home"><svg class="brand-mark" viewBox="0 0 32 36" fill="none" aria-hidden="true"><path d="M5 31V15C5 6 14 2 29 3 28 17 20 24 9 24M9 23 23 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="brand-word">folium<span>.</span></span></a>`;}
 function shell(body,pageTitle='My courses',active='courses',cid=null){
@@ -62,13 +72,33 @@ function render(){
       }else if(r[2]==='setup'||c.status!=='ready'&&state.allowPrepared!==c.id){
         if(state.draftCid!==c.id){state.draft=structuredClone(c.modules);state.draftCid=c.id;}
         body=UI.setupView(c,state.draft,state.settings);
-      }else{body=UI.courseView(c,state.view,state.zoom);}
+      }else{body=UI.courseView(c,state.view,state.zoom||1);}
     }
   }else{body=UI.library(state.courses);}
   document.title=`${title} — Folium`;
   $('#app').innerHTML=shell(body,title,active,cid);
+  document.body.classList.remove('map-open');
+  requestAnimationFrame(applyGraphZoom);
   if(r[0]==='new')renderFiles();
 }
+
+function applyGraphZoom(){
+  const stage=$('.graph-stage'),scroll=$('.graph-scroll');if(!stage||!scroll)return;
+  const width=Number(stage.dataset.width),height=Number(stage.dataset.height);
+  const scale=state.zoom??Math.min(1,(scroll.clientWidth-24)/width,(scroll.clientHeight-24)/height);
+  stage.style.transform=`scale(${scale})`;stage.parentElement.style.width=`${width*scale}px`;stage.parentElement.style.height=`${height*scale}px`;
+  stage.dataset.scale=scale;
+}
+window.addEventListener('resize',()=>{if(state.zoom===null)applyGraphZoom();});
+function toggleMap(){const panel=$('.map-panel');if(!panel)return;const expanded=panel.classList.toggle('expanded');document.body.classList.toggle('map-open',expanded);const button=$('[data-action="map-expand"]');button.setAttribute('aria-label',expanded?'Close expanded map':'Expand map');button.setAttribute('aria-pressed',expanded);state.zoom=null;applyGraphZoom();}
+let drag=null;
+document.addEventListener('pointerdown',event=>{
+  const scroll=event.target.closest('.graph-scroll');
+  if(!scroll||event.target.closest('a,button')||event.button!==0)return;
+  drag={scroll,x:event.clientX,y:event.clientY,left:scroll.scrollLeft,top:scroll.scrollTop};scroll.setPointerCapture(event.pointerId);
+});
+document.addEventListener('pointermove',event=>{if(drag){drag.scroll.scrollLeft=drag.left+drag.x-event.clientX;drag.scroll.scrollTop=drag.top+drag.y-event.clientY;}});
+document.addEventListener('pointerup',()=>{drag=null;});
 
 function renderFiles(){if($('#upload-files'))$('#upload-files').innerHTML=UI.uploadFileList(state.files);}
 function addFiles(files){
@@ -107,12 +137,19 @@ function closeModal(){
 function source(docId,page=1){
   const d=state.courses.flatMap(c=>c.documents).find(x=>x.id===docId);if(!d)throw new Error('This source document is not available.');
   page=Math.max(1,Math.min(d.page_count,Number(page)||1));
-  openModal(`<section class="modal source-modal" role="dialog" aria-modal="true" aria-labelledby="source-title"><div class="modal-head"><div><span class="eyebrow">YOUR ORIGINAL SOURCE</span><h2 id="source-title">${esc(d.name)}</h2></div><button class="icon-btn" data-action="close-modal" aria-label="Close source viewer">${icon('close')}</button></div><div class="source-toolbar"><label>PDF page <input id="source-page" type="number" min="1" max="${d.page_count}" value="${page}" data-doc="${d.id}"> of ${d.page_count}</label><button class="text-btn" data-action="source-text">Read extracted text</button><a class="text-btn" id="source-external" href="/api/documents/${d.id}#page=${page}" target="_blank" rel="noopener">Open original PDF ${icon('external')}</a></div><div class="source-viewport"><p id="source-loading" class="source-loading" role="status">Opening the saved page…</p><img class="source-page-image" id="source-image" src="/api/documents/${d.id}/pages/${page}.png" alt="${esc(d.name)}, physical PDF page ${page}"><div id="source-text" class="source-text hidden" role="region" aria-label="Extracted source page text"></div></div></section>`,'[data-action="close-modal"]');
+  openModal(`<section class="modal source-modal" role="dialog" aria-modal="true" aria-labelledby="source-title"><div class="modal-head"><div><span class="eyebrow">YOUR ORIGINAL SOURCE</span><h2 id="source-title">${esc(d.name)}</h2></div><button class="icon-btn" data-action="close-modal" aria-label="Close source viewer">${icon('close')}</button></div><div class="source-toolbar"><label>PDF page <input id="source-page" type="number" min="1" max="${d.page_count}" value="${page}" data-doc="${d.id}"> of ${d.page_count}</label><button class="text-btn" data-action="source-text">Read extracted text</button><a class="text-btn" id="source-external" href="/api/documents/${d.id}#page=${page}" target="_blank" rel="noopener">Open original PDF ${icon('external')}</a></div><div id="source-annotation" class="source-annotation hidden"></div><div class="source-viewport"><p id="source-loading" class="source-loading" role="status">Opening the saved page…</p><img class="source-page-image" id="source-image" src="/api/documents/${d.id}/pages/${page}.png" alt="${esc(d.name)}, physical PDF page ${page}"><div id="source-text" class="source-text hidden" role="region" aria-label="Extracted source page text"></div></div></section>`,'[data-action="close-modal"]');
+  sourceAnnotation(d,page);
+}
+function sourceAnnotation(doc,page){
+  const target=$('#source-annotation'),notes=(doc.annotations||[]).filter(n=>n.page===page);
+  target.classList.toggle('hidden',!notes.length);
+  target.innerHTML=notes.map(n=>`<strong>Reviewed source clarification</strong><p>${esc(n.message)}</p>${/^https?:\/\//.test(n.url||'')?`<a class="text-btn" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer">Supporting reference ${icon('external')}</a>`:''}`).join('');
 }
 function changeSourcePage(input,clamp=false){
   let page=Number(input.value);
   if(clamp){page=Math.max(1,Math.min(Number(input.max),Math.floor(page)||1));input.value=page;}
   if(!Number.isInteger(page)||page<1||page>Number(input.max))return;
+  const doc=state.courses.flatMap(c=>c.documents).find(d=>d.id===input.dataset.doc);if(doc)sourceAnnotation(doc,page);
   const path=`/api/documents/${input.dataset.doc}/pages/${page}.png`;
   if($('#source-image').getAttribute('src')===path)return;
   $('#source-loading').textContent='Opening the saved page…';$('#source-loading').classList.remove('hidden');$('.source-viewport').scrollTop=0;
@@ -156,23 +193,27 @@ document.addEventListener('click',async event=>{
     if(action==='source')source(el.dataset.doc,el.dataset.page);
     if(action==='source-text'){
       const input=$('#source-page'),text=$('#source-text'),image=$('#source-image');
-      if(text.classList.contains('hidden')){const data=await api(`/documents/${input.dataset.doc}/pages/${input.value}`);text.textContent=data.text||'No readable text was found on this page.';text.classList.remove('hidden');image.classList.add('hidden');el.textContent='View original page';}
+      if(text.classList.contains('hidden')){const data=await api(`/documents/${input.dataset.doc}/pages/${input.value}`);text.textContent=(data.warning?data.warning+'\n\n':'')+(data.text||'No readable text was found on this page.');$('#source-loading').classList.add('hidden');text.classList.remove('hidden');image.classList.add('hidden');el.textContent='View original page';}
       else{text.classList.add('hidden');image.classList.remove('hidden');el.textContent='Read extracted text';}
     }
-    if(action==='course-view'){state.view=el.dataset.view;render();}
+    if(action==='course-view'){state.view=el.dataset.view;state.zoom=null;render();}
+    if(action==='map-expand')toggleMap();
     if(action==='zoom-in'||action==='zoom-out'||action==='zoom-fit'){
-      const oldScroll=$('.graph-scroll'),left=oldScroll?.scrollLeft||0,top=oldScroll?.scrollTop||0;
-      state.zoom=action==='zoom-fit'?1:Math.min(1.5,Math.max(.55,state.zoom+(action==='zoom-in'?.15:-.15)));render();
-      if($('.graph-scroll')){$('.graph-scroll').scrollLeft=left;$('.graph-scroll').scrollTop=top;}
+      const current=Number($('.graph-stage')?.dataset.scale)||1;
+      state.zoom=action==='zoom-fit'?null:Math.min(2,Math.max(.2,current+(action==='zoom-in'?.15:-.15)));applyGraphZoom();
+      if(action==='zoom-fit'){$('.graph-scroll').scrollLeft=0;$('.graph-scroll').scrollTop=0;}
     }
     if(action==='bookmark'){await flushNotes();await progress({bookmarked:!m.bookmarked});const y=scrollY;render();scrollTo(0,y);toast(m.bookmarked?'Removed from saved modules.':'Saved for another look.');}
     if(action==='mark-read'){await flushNotes();await progress({read:!m.read});const y=scrollY;render();scrollTo(0,y);toast(m.read?'Marked as not yet studied.':'A little more understanding. Progress saved.');}
     if(action==='scroll-section')$('#section-'+el.dataset.index)?.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'});
     if(action==='reveal'){const target=$('#'+el.dataset.target);target.classList.toggle('hidden');el.innerHTML=(target.classList.contains('hidden')?'Reveal solution':'Hide solution')+' '+icon('down');}
     if(action==='submit-quiz'){
-      const q=getQuiz(c,m),value=await api(`/courses/${c.id}/modules/${enc(m.id)}/quiz`,{answers:q.answers});updateCourse(value.course);q.result=value.result;saveQuiz(c,m);render();window.scrollTo({top:0,behavior:'smooth'});toast('Practice saved. Your course map is up to date.');
+      const q=getQuiz(c,m),value=await api(`/courses/${c.id}/modules/${enc(m.id)}/quiz`,{answers:q.answers,question_ids:q.order});updateCourse(value.course);q.result=value.result;saveQuiz(c,m);render();window.scrollTo({top:0,behavior:'smooth'});toast('Practice saved. Your course map is up to date.');
     }
-    if(action==='reset-quiz'){state.quizzes[quizKey(c,m)]={answers:{}};saveQuiz(c,m);render();window.scrollTo(0,0);}
+    if(action==='reset-quiz'){state.quizzes[quizKey(c,m)]=newQuiz(m,getQuiz(c,m).topic);saveQuiz(c,m);render();window.scrollTo(0,0);}
+    if(action==='extend-course'){
+      openModal(`<section class="modal extend-modal" role="dialog" aria-modal="true" aria-labelledby="extend-title"><div class="modal-head"><h2 id="extend-title">Make room for a missing topic.</h2><button class="icon-btn" data-action="close-modal" aria-label="Close">${icon('close')}</button></div><form id="extend-form" class="modal-body"><p class="muted">Add a module from your existing materials. Your saved modules stay available, and a backup is created before the addition.</p><div class="field"><label for="extend-title-input">Module title</label><input id="extend-title-input" name="title" required maxlength="150"></div><div class="field"><label for="extend-topics">Topics · one per line</label><textarea id="extend-topics" name="topics" required></textarea></div><div class="field"><label>Prerequisites</label><div class="prereq-select">${c.modules.map(m=>`<label><input type="checkbox" name="parents" value="${esc(m.id)}">${esc(m.title)}</label>`).join('')}</div></div><p class="small-text muted">Adding a module uses no AI calls. Starting preparation uses one plan call, then one call per lesson.</p><button class="btn primary" type="submit">Save missing module ${icon('arrow')}</button></form></section>`,'#extend-title-input');
+    }
     if(action==='save-notes'){await flushNotes();toast('Your notes are saved.');}
     if(action==='remove-file'){state.files.splice(Number(el.dataset.index),1);renderFiles();}
     if(action==='prepare-outline')await prepare('outline');
@@ -194,10 +235,14 @@ document.addEventListener('click',async event=>{
 });
 
 document.addEventListener('submit',async event=>{
-  if(!['settings-form','create-form'].includes(event.target.id))return;
+  if(!['settings-form','create-form','extend-form'].includes(event.target.id))return;
   event.preventDefault();const form=event.target,button=$('button[type="submit"]',form);button.disabled=true;const old=button.innerHTML;
   try{
-    if(form.id==='settings-form'){
+    if(form.id==='extend-form'){
+      const data=new FormData(form),c=state.current.c;
+      const saved=await api(`/courses/${c.id}/extend`,{modules:[{id:'m'+Date.now(),title:data.get('title'),topics:String(data.get('topics')).split('\n').map(t=>t.trim()).filter(Boolean),prerequisites:data.getAll('parents')}]});
+      updateCourse(saved);state.allowPrepared=null;closeModal();goto(link(c.id)+'/setup');toast('Module added. Ready to prepare only the missing content.');
+    }else if(form.id==='settings-form'){
       const data=new FormData(form);state.settings=await api('/settings',{api_key:data.get('api_key'),model:data.get('model'),interval:Number(data.get('interval'))});render();toast('Your connection settings are saved.');
     }else{
       if(!state.files.length)throw new Error('Add at least one readable course PDF.');
@@ -213,12 +258,15 @@ document.addEventListener('submit',async event=>{
 
 document.addEventListener('change',async event=>{
   const el=event.target;
+  if(el.id==='practice-topic'){
+    const {c,m}=state.current;state.quizzes[quizKey(c,m)]=newQuiz(m,el.value);saveQuiz(c,m);const y=scrollY;render();scrollTo(0,y);
+  }
   if(el.id==='pdf-input'){addFiles(el.files);el.value='';}
   if(el.dataset.fileRole!==undefined)state.files[Number(el.dataset.fileRole)].role=el.value;
   if(el.dataset.question){
     const {c,m}=state.current,q=getQuiz(c,m);q.answers[el.dataset.question]=Number(el.value);saveQuiz(c,m);
     $$('.question-options').forEach(group=>$$('.option',group).forEach(label=>label.classList.toggle('selected',!!$('input',label)?.checked)));
-    const total=m.package.questions.filter(x=>x.type==='objective').length,count=Object.keys(q.answers).length;
+    const total=q.order.length,count=Object.keys(q.answers).length;
     $('#answered-count').textContent=`${count} of ${total} answered`;$('[data-action="submit-quiz"]').disabled=count<total;
   }
   if(el.id==='source-page'){
@@ -243,7 +291,7 @@ document.addEventListener('dragleave',event=>event.target.closest('#dropzone')?.
 document.addEventListener('drop',event=>{const zone=event.target.closest('#dropzone');if(zone){event.preventDefault();zone.classList.remove('dragover');addFiles(event.dataTransfer.files);}});
 document.addEventListener('keydown',event=>{
   if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();searchModal();}
-  if(event.key==='Escape'){closeModal();$('#sidebar')?.classList.remove('open');$('.mobile-shade')?.classList.remove('open');}
+  if(event.key==='Escape'){if($('.map-panel.expanded'))toggleMap();closeModal();$('#sidebar')?.classList.remove('open');$('.mobile-shade')?.classList.remove('open');}
   if(event.target.id==='dropzone'&&['Enter',' '].includes(event.key)){event.preventDefault();$('#pdf-input').click();}
   if(event.key==='Tab'&&$('#overlay-root .modal')){
     const nodes=$$('a[href],button:not(:disabled),input,select,textarea,iframe',[...$('#overlay-root').children][0]).filter(x=>x.getClientRects().length),first=nodes[0],last=nodes[nodes.length-1];

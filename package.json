@@ -1,0 +1,6 @@
+{
+  "name": "folium-local",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node tests/test_reader.mjs" }
+}

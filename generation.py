@@ -188,6 +188,11 @@ def course_context(course):
     return json.dumps([dict(title=m["title"], topics=m["topics"]) for m in course["modules"]])
 
 
+def reviewed_notes(course, module):
+    notes = [n for n in course.get("source_annotations", []) if module["id"] in n.get("module_ids", [])]
+    return "\nREVIEWED SOURCE CLARIFICATIONS (local audit; distinguish these from the original notes and flag the source conflict):\n" + json.dumps(notes) if notes else ""
+
+
 class Jobs:
     def __init__(self, store, provider):
         self.store, self.provider = store, provider
@@ -281,7 +286,7 @@ class Jobs:
                 raise ValueError("No readable learning material is available for this module.")
             preparation = module.get("preparation") or dict(version=VERSION, lessons={})
             if not preparation.get("plan"):
-                prompt = PLAN_INSTRUCTIONS.format(module=module["title"], topics=json.dumps(module["topics"]), context=course_context(course)) + "\n" + format_pages(pages)
+                prompt = PLAN_INSTRUCTIONS.format(module=module["title"], topics=json.dumps(module["topics"]), context=course_context(course)) + reviewed_notes(course,module) + "\n" + format_pages(pages)
                 preparation["plan"] = self.provider.generate(prompt, TEACHING_PLAN, lambda x: validate_plan(x, module["topics"]))
                 self.store.update(cid, lambda c: next(m for m in c["modules"] if m["id"] == module["id"]).update(preparation=preparation))
             plan = preparation["plan"]
@@ -291,7 +296,7 @@ class Jobs:
                 self._status(cid, "running", "lessons", f"{module['title']} · lesson {index+1}/{len(plan['lessons'])}: {lesson['title']}", done, total)
                 lesson_pages = source_pages(docs, module["title"] + " " + " ".join(lesson["topics"] + lesson["concepts"]))
                 allowed = {(p["doc_id"], p["page"]) for p in lesson_pages}
-                prompt = LESSON_INSTRUCTIONS.format(module=module["title"], lesson=lesson["title"], topics=json.dumps(lesson["topics"]), concepts=json.dumps(lesson["concepts"]), gaps=json.dumps(lesson["gaps"]), plan=json.dumps(plan), context=course_context(course)) + "\n\n" + format_pages(lesson_pages)
+                prompt = LESSON_INSTRUCTIONS.format(module=module["title"], lesson=lesson["title"], topics=json.dumps(lesson["topics"]), concepts=json.dumps(lesson["concepts"]), gaps=json.dumps(lesson["gaps"]), plan=json.dumps(plan), context=course_context(course)) + reviewed_notes(course,module) + "\n\n" + format_pages(lesson_pages)
                 def validate(value):
                     value = validate_package(value, allowed)
                     if any(q.get("topic") not in lesson["topics"] for q in value["questions"]):
@@ -299,7 +304,7 @@ class Jobs:
                     for topic in lesson["topics"]:
                         if not any(q["type"] == "objective" and q["topic"] == topic for q in value["questions"]):
                             raise ValueError("A lesson is missing practice for a required topic. Resume to retry.")
-                    if any(not s.get("sources") for s in value["sections"] if s["kind"] != "recap"):
+                    if any(not s.get("sources") for s in value["sections"] if s["kind"] != "recap" and not (s["kind"] == "pitfall" and value.get("coverage_notes"))):
                         raise ValueError("A teaching section needs a supplied source citation. Resume to retry.")
                     return value
                 lesson_pkg = self.provider.generate(prompt, PACKAGE, validate)
@@ -319,6 +324,9 @@ class Jobs:
                 gaps.extend(lesson["gaps"])
                 pkg["coverage_map"].extend(dict(topic=t, lesson=lesson["title"], section=start) for t in lesson["topics"])
             pkg["coverage_notes"] = "\n\n".join(dict.fromkeys(gaps))
+            annotations = [n for n in course.get("source_annotations", []) if module["id"] in n.get("module_ids", [])]
+            if annotations:
+                pkg["corrections"] = [dict(message=n["message"], url=n.get("url", "")) for n in annotations]
             pkg["source_pages"] = [dict(doc_id=doc, page=page) for doc,page in sorted({(r["doc_id"], r["page"]) for r in pkg["source_pages"]})]
             validate_package(pkg, {(p["doc_id"],p["page"]) for p in pkg["source_pages"]})
             def save(c, mid=module["id"], package=pkg):

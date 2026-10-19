@@ -115,6 +115,7 @@ class Store:
         course["documents"] = [dict(id=d["id"], name=d["name"], role=d["role"],
                                    page_count=len(d["pages"]),
                                    text_warning_pages=sum("\ufffd" in p for p in d["pages"]),
+                                   annotations=[n for n in course.get("source_annotations", []) if n["doc_id"] == d["id"]],
                                    readable_pages=sum(bool(p.strip()) for p in d["pages"]))
                                for d in self.docs(course_id)]
         return course
@@ -256,6 +257,12 @@ class Store:
                             validate_package(part, allowed)
                         module["preparation"] = preparation
                 module_ids = {m["id"] for m in modules}
+                for row in original.get("document_coverage", []):
+                    if not isinstance(row,dict) or row.get("doc_id") not in original_docs or not isinstance(row.get("module_ids"),list) or any(mid not in module_ids for mid in row["module_ids"]):
+                        raise ValueError("Invalid source coverage in backup.")
+                for note in original.get("source_annotations", []):
+                    if not isinstance(note,dict) or (note.get("doc_id"),note.get("page")) not in allowed or not isinstance(note.get("message"),str) or not isinstance(note.get("module_ids"),list) or any(mid not in module_ids for mid in note["module_ids"]):
+                        raise ValueError("Invalid source clarification in backup.")
                 pyqs = original.get("pyqs", [])
                 if not isinstance(pyqs,list):
                     raise ValueError("Invalid past-paper questions in backup.")
@@ -292,7 +299,7 @@ class Store:
                 course = self.create(original.get("title", "Imported course"), original.get("description", ""))
                 course.update(modules=remap(modules), pyqs=remap(pyqs),
                               reviews=reviews, demo=bool(original.get("demo", False)))
-                for field in ("document_coverage", "generation_version", "corrections", "warnings"):
+                for field in ("document_coverage", "generation_version", "corrections", "warnings", "source_annotations"):
                     if field in original:
                         course[field] = remap(original[field])
                 for module, old in zip(course["modules"], original["modules"]):

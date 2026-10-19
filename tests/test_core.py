@@ -317,6 +317,20 @@ class HttpTests(unittest.TestCase):
             self.request(f"/api/documents/{c['documents'][0]['id']}/pages/999")
         self.assertEqual(400,error.exception.code)
 
+    def test_broken_pdf_glyph_is_readable_in_source_endpoint(self):
+        c=self.request("/api/courses")[0];doc=c["documents"][0]
+        store=self.server.store
+        with store.lock:
+            original=store.db.execute("SELECT pages FROM documents WHERE id=?",(doc["id"],)).fetchone()[0]
+            pages=json.loads(original);pages[0]="Math α |ψ⟩ \ud83c"
+            with store.db:store.db.execute("UPDATE documents SET pages=? WHERE id=?",(json.dumps(pages),doc["id"]))
+        try:
+            page=self.request(f"/api/documents/{doc['id']}/pages/1")
+            self.assertEqual("Math α |ψ⟩ �",page["text"])
+            self.assertIn("symbols",page["warning"])
+        finally:
+            with store.lock,store.db:store.db.execute("UPDATE documents SET pages=? WHERE id=?",(original,doc["id"]))
+
 
 if __name__ == "__main__":
     unittest.main()
