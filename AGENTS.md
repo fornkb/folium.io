@@ -2,6 +2,11 @@
 
 This is the local-first Folium study app. The parent project's `sources/` and synced files are read-only. Work only in this repository.
 
+## Working location
+- On this computer, the canonical working folder is `C:\Users\babur\OneDrive\Documents\ChatGPT\folium`. Run commands, edit files, and create future commits here.
+- The earlier checkout under `.codex\.chatgpt-projects` is a historical development mirror. Do not use it for ongoing development.
+- Preserve this folder's `.env`, `data/`, uploaded PDFs, and backups when updating source files.
+
 ## Product contract
 - A course is created from the user's PDFs, not a hardcoded subject.
 - Review the editable syllabus before explicitly starting full generation.

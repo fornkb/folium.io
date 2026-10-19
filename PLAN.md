@@ -58,3 +58,8 @@ Text-based PDFs first; image-only scans require OCR before upload. No live tutor
 - [x] Back up and repair the live course; add only the missing Quantum Error Correction module. Test, synchronize the running copy, and document results.
 
 Completed follow-up: 46 backend tests and the reader suite pass. The running copy is updated; all eight modules are ready. The new module demonstrates the six-lesson teaching flow. Existing guides were preserved, local corrections were backed up, and an actual complete-course backup round trip passed.
+
+## Working-folder handover
+- [x] Use the Documents/ChatGPT/Folium checkout as the canonical working copy on this computer.
+- Verified all 60 tracked project files match the latest implementation commit, with the existing configuration and both saved courses intact.
+- Future development commands and commits run from the Documents checkout; the earlier Codex checkout is retained as a historical mirror.
