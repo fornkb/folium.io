@@ -1,10 +1,64 @@
-data/
+# Credentials and local configuration
 .env
 .env.*
 !.env.example
+/settings.json
+
+# Private courses, uploaded materials, databases, and backups
+/data/
+/course_data/
+/courses/
+/uploads/
+/backups/
+*.pdf
+*.ppt
+*.pptx
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.folium.zip
+
+# Local demo content and its authoring tool
+/sample.py
+/sample_sources/
+/tools/create_sample.py
+
+# Keep the root README as the only Markdown document in Git
+*.md
+!/README.md
+/review/
+/artifacts/
+/screenshots/
+
+# Local agent/editor configuration
+.agents/
+.codex/
+.vscode/
+.idea/
+.vs/
+
+# Dependencies, caches, and generated output
 .venv/
+venv/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+node_modules/
 *.log
-tmp/
+/tmp/
+/temp/
+/build/
+/dist/
+
+# Operating-system files
 .DS_Store
+Thumbs.db
+Desktop.ini

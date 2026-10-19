@@ -21,13 +21,10 @@ ROOT = Path(__file__).resolve().parent
 MAX_BODY = 80 * 1024 * 1024
 
 
-def create_server(data_dir, port=8765, seed=True, env_file=None):
+def create_server(data_dir, port=8765, env_file=None):
     store = Store(data_dir)
     settings = Settings(store.root, env_file=env_file)
     jobs = Jobs(store, Gemini(store, settings))
-    if seed:
-        from sample import seed_sample
-        seed_sample(store)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "Folium/1.0"

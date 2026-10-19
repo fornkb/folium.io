@@ -6,7 +6,7 @@ from pathlib import Path
 from core import Store, safe_text, grade, module_state, assessment_evidence
 from generation import source_pages, validate_plan, Jobs, TEACHING_PLAN, ProviderError
 from test_core import test_directory
-from sample import SPECS, sample_package
+from fixtures import TEST_MODULES, lesson_fixture, pdf_fixture
 
 
 class TeachingTests(unittest.TestCase):
@@ -47,8 +47,7 @@ class TeachingTests(unittest.TestCase):
         with test_directory() as folder:
             store = Store(folder)
             course = store.create("Resumption")
-            root = Path(__file__).resolve().parents[1]
-            doc = store.add_pdf(course["id"],"notes.pdf","material",(root/"sample_sources/Course-notes.pdf").read_bytes())
+            doc = store.add_pdf(course["id"],"notes.pdf","material",pdf_fixture())
             course["modules"]=[dict(id="m1",title="Complexity",topics=["A","B"],prerequisites=[])]
             store.save(course)
             class Fake:
@@ -61,7 +60,7 @@ class TeachingTests(unittest.TestCase):
                     topic = "A" if 'Lesson: A\n' in prompt else "B"
                     self.calls.append(topic)
                     if topic == "B" and self.fail:raise ProviderError("Quota")
-                    pkg = sample_package(SPECS[0],doc["id"],1)
+                    pkg = lesson_fixture(TEST_MODULES[0],doc["id"],1)
                     for q in pkg["questions"]:q["topic"]=topic
                     return validator(pkg)
             fake=Fake(); jobs=Jobs(store,fake)
@@ -85,9 +84,8 @@ class TeachingTests(unittest.TestCase):
         from repairs import apply_corrections
         with test_directory() as folder:
             store=Store(folder);c=store.create("Corrections")
-            root=Path(__file__).resolve().parents[1]
-            doc=store.add_pdf(c["id"],"notes.pdf","material",(root/"sample_sources/Course-notes.pdf").read_bytes())
-            pkg=sample_package(SPECS[0],doc["id"],1)
+            doc=store.add_pdf(c["id"],"notes.pdf","material",pdf_fixture())
+            pkg=lesson_fixture(TEST_MODULES[0],doc["id"],1)
             c["modules"]=[dict(id="m1",title="Saved",topics=["A"],prerequisites=[],package=pkg,notes="Keep")];store.save(c)
             question=pkg["questions"][0]
             patch=dict(id="review-1",message="Clarify wording",modules=[dict(id="m1",questions=[dict(id=question["id"],expected_question="Stale wording",updates=dict(question="Clearer question"))])])

@@ -14,7 +14,7 @@ from unittest.mock import patch
 from app import create_server
 from core import Store, grade, module_state, review_card, validate_outline, validate_package
 from generation import Gemini, Jobs, ProviderError, Settings, source_pages, OUTLINE, TEACHING_PLAN
-from sample import SPECS, sample_package, seed_sample
+from fixtures import TEST_MODULES, lesson_fixture, pdf_fixture, seed_test_course
 
 ROOT = Path(__file__).resolve().parents[1]
 (ROOT / "tmp").mkdir(exist_ok=True)
@@ -30,20 +30,29 @@ class CoreTests(unittest.TestCase):
         self.temp = test_directory()
         self.store = Store(self.temp.name)
         self.course = self.store.create("Test course")
-        self.doc = self.store.add_pdf(self.course["id"], "notes.pdf", "material", (ROOT / "sample_sources/Course-notes.pdf").read_bytes())
+        self.doc = self.store.add_pdf(self.course["id"], "notes.pdf", "material", pdf_fixture())
 
     def tearDown(self):
         self.store.close()
         self.temp.cleanup()
 
     def module(self):
-        module = {k:copy.deepcopy(SPECS[0][k]) for k in ("id", "title", "description", "topics", "prerequisites")}
-        module["package"] = sample_package(SPECS[0], self.doc["id"], 1)
+        module = {k:copy.deepcopy(TEST_MODULES[0][k]) for k in ("id", "title", "description", "topics", "prerequisites")}
+        module["package"] = lesson_fixture(TEST_MODULES[0], self.doc["id"], 1)
         return module
+
+    def test_new_workspace_starts_empty(self):
+        with test_directory() as folder:
+            server = create_server(folder, 0)
+            try:
+                self.assertEqual([], server.store.courses())
+            finally:
+                server.server_close()
+                server.store.close()
 
     def test_pdf_text_and_duplicate_detection(self):
         self.assertIn("Complexity", self.doc["pages"][0])
-        same = self.store.add_pdf(self.course["id"], "renamed.pdf", "material", (ROOT / "sample_sources/Course-notes.pdf").read_bytes())
+        same = self.store.add_pdf(self.course["id"], "renamed.pdf", "material", pdf_fixture())
         self.assertEqual(self.doc["id"], same["id"])
         self.assertEqual(1, len(self.store.docs(self.course["id"])))
 
@@ -210,8 +219,8 @@ class CoreTests(unittest.TestCase):
         Jobs(self.store, None)
         self.assertEqual("paused", self.store.course(self.course["id"])["job"]["state"])
 
-    def test_sample_citations_point_to_matching_section_pages(self):
-        seed_sample(self.store)
+    def test_fixture_citations_point_to_matching_section_pages(self):
+        seed_test_course(self.store)
         demo = next(c for c in self.store.courses() if c["demo"])
         docs = {d["id"]:d for d in self.store.docs(demo["id"])}
         for module in demo["modules"]:
@@ -225,6 +234,7 @@ class HttpTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = test_directory()
         cls.server = create_server(cls.temp.name, 0)
+        seed_test_course(cls.server.store)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
         cls.url = f"http://127.0.0.1:{cls.server.server_port}"
@@ -288,7 +298,7 @@ class HttpTests(unittest.TestCase):
         self.fail("The test preparation job did not finish.")
 
     def test_upload_outline_generate_study_end_to_end(self):
-        course=self.upload("Integration course",[("notes.pdf",(ROOT/"sample_sources/Course-notes.pdf").read_bytes(),"material")])
+        course=self.upload("Integration course",[("notes.pdf",pdf_fixture(),"material")])
         cid=course["id"]
         doc=course["documents"][0]
         def generate(prompt,schema,validator):
@@ -296,7 +306,7 @@ class HttpTests(unittest.TestCase):
                 return validator(dict(description="Test outline",modules=[dict(id="m1",title="Complexity",description="Growth",topics=["Big O"],prerequisites=[])],document_coverage=[dict(doc_id=doc["id"],module_ids=["m1"],notes="")]))
             if schema==TEACHING_PLAN:
                 return validator(dict(overview="Overview",objectives=["Understand Big O"],lessons=[dict(id="l1",title="Complexity",topics=["Big O"],concepts=["Growth"],gaps=[])]))
-            package=sample_package(SPECS[0],doc["id"],1)
+            package=lesson_fixture(TEST_MODULES[0],doc["id"],1)
             for q in package["questions"]:q["topic"]="Big O"
             return validator(package)
         with patch.object(self.server.jobs.provider,"generate",side_effect=generate) as provider:
@@ -318,7 +328,7 @@ class HttpTests(unittest.TestCase):
     def test_upload_failure_rolls_back_new_course(self):
         count=len(self.request("/api/courses"))
         with self.assertRaises(urllib.error.HTTPError):
-            self.upload("Bad upload",[("good.pdf",(ROOT/"sample_sources/Course-outline.pdf").read_bytes(),"syllabus"),("bad.pdf",b"bad","material")])
+            self.upload("Bad upload",[("good.pdf",pdf_fixture("outline"),"syllabus"),("bad.pdf",b"bad","material")])
         self.assertEqual(count,len(self.request("/api/courses")))
 
     def test_invalid_source_page_rejected(self):

@@ -1,60 +1,109 @@
 # Folium
 
-A local-first course companion. Turn course PDFs into a knowledge map, detailed lessons, source-linked past papers, saved practice questions, and flashcards. Prepare once; study without further API calls.
+A local-first study companion that turns your course PDFs into a connected course map, detailed lessons, source-linked past questions, practice quizzes, and flashcards. Prepare a course once, then study its saved content without further AI calls.
 
-## Run
+## Features
 
-Requires Python 3.10 or newer.
+- Review and edit an AI-proposed syllabus before preparing lessons.
+- Explore modules and prerequisites on a course map with zoom, pan, and progress indicators.
+- Study focused lessons with worked examples, simple flow diagrams, and offline mathematical typesetting.
+- Open citations at the original PDF page, with both image and extracted-text views.
+- Practise objective questions with instant scoring, or reveal solutions for subjective questions.
+- Keep personal notes, review spaced-repetition cards, and track recall separately from reading completion.
+- Export and import complete course backups, including the original PDFs and saved progress.
+
+## Run locally
+
+Requires **Python 3.10 or newer**. No frontend build or package installation is needed for the browser interface.
 
 ```powershell
 python -m pip install -r requirements.txt
 python app.py
 ```
 
-Open http://127.0.0.1:8765. The built-in sample course needs no API key. To prepare your own course, copy `.env.example` to `.env` in the same folder as `app.py`, then fill in `GEMINI_API_KEY`. Folium reads that file automatically. `GOOGLE_API_KEY` is also supported. Alternatively, use an environment variable or enter a key in Settings. Keys never enter browser storage or course backups. This is a personal local prototype: anyone with access to the computer's files can read local configuration and course files.
+Open [Folium](http://127.0.0.1:8765) in your browser. On Windows, you can also use `start.bat` after installing the dependencies. Keep the server running while using the app. Closing it leaves your saved courses on disk.
 
-On this Windows computer, you can also double-click **start.bat**. It prefers a project virtual environment or the bundled Python runtime, then falls back to your system Python. Keep the server window open while using Folium. Closing it stops the app; the data remains saved.
+A fresh installation starts with an empty library. Sample courses and personal course materials are not distributed in the repository.
 
-Use `--port 8766` to choose another port, `--data-dir <path>` for another local storage folder, and `--env-file <path>` when your `.env` is elsewhere. The server binds to 127.0.0.1 only.
+### Connect Gemini
 
-Settings shows whether the active key comes from the `.env` file, environment variables, or a key saved in Settings. A saved key takes precedence; otherwise `GEMINI_API_KEY` takes precedence over `GOOGLE_API_KEY`. Environment variables take precedence over the same variable in `.env`. Empty saved key fields do not mask an environment key. Saving model options does not copy an environment key into local settings.
+Create a `.env` file beside `app.py`, using `.env.example` as a template. Add your key locally:
 
-The `.env` file is reread when configuration is needed, so changing its key does not require another server restart once this version is running. Refresh the browser to update the connection indicator. Windows user/system environment variables are also checked if the running process inherited no value.
+```dotenv
+GEMINI_API_KEY=your_key_here
+```
 
-## How a course works
+You can also configure a key in the app's Settings or through `GEMINI_API_KEY` / `GOOGLE_API_KEY` environment variables. Select a Gemini model available to your project in Settings. Folium has no automatic paid-model fallback; model access and free-tier quotas depend on your Google project.
 
-1. Create a course and label uploaded PDFs as syllabus, learning material, or past papers.
-2. Request an outline, review the modules/topics/prerequisites, then explicitly generate the course.
-3. Preparation saves each successful stage. Resume a paused job after quota resets or a restart.
-4. Read, practise, reveal solutions, review cards, and keep notes from saved content.
-5. Export a course ZIP to back up or share the package. Import it into another local Folium workspace.
+A key saved in Settings takes precedence over environment configuration. Otherwise, process environment variables take precedence over `.env`; `GEMINI_API_KEY` takes precedence over `GOOGLE_API_KEY`. The app rereads `.env` when configuration is needed. Refresh the browser after editing it to update the connection indicator.
 
-## Scope and limitations
+Keys stay on the server and are excluded from course exports. Configuration and course files are stored locally, so other users with access to those files can read them. Never commit a real key.
 
-- PDF text extraction is local. Image-only scans need OCR before upload; partially unreadable pages are reported.
-- Only document excerpts needed for generation are sent to Gemini. There are no AI calls during study or quiz scoring.
-- Citation previews render the original PDF page locally, with an extracted-text view and a link to the original file. No browser PDF plug-in is required.
-- Free-tier model availability and quotas depend on your Google project. Change the model in Settings as needed. No automatic paid fallback.
-- Page references point to physical PDF pages. Source-location checks do not prove that every generated claim follows from the source. AI practice and generated PYQ solutions are labeled.
-- Objective questions have saved answer keys and deterministic grading. Subjective practice provides revealable solutions, without automatic marks.
-- Course backups include your uploaded materials and notes; share them only with intended recipients.
-- There is no account system, live tutor chat, hosted deployment, or multi-device synchronization in this version.
+### Optional startup settings
+
+```powershell
+python app.py --port 8766
+python app.py --data-dir "C:\path\to\folium-data"
+python app.py --env-file "C:\path\to\.env"
+```
+
+The server listens on `127.0.0.1` only. The default port is `8765`; `FOLIUM_PORT` can also set it.
+
+## Prepare and study a course
+
+1. Create a course and upload PDFs, identifying each as a syllabus, learning material, or past paper.
+2. Prepare an outline, then review its modules, topics, prerequisites, and document coverage.
+3. Start lesson preparation. Successful teaching plans and individual lessons are saved as they finish.
+4. Open a module from the course map to study, practise, view mapped past questions, or review cards.
+5. Export a course ZIP when you want a portable backup. Import it into another local installation to restore it.
+
+Preparation uses one request for the outline, then one teaching-plan request per unfinished module and one request per focused lesson (one to eight lessons per module). Past-paper mapping uses a request per readable paper page. Each lesson also supplies its practice questions and cards.
+
+If preparation pauses because of a quota, connection failure, or restart, resume it explicitly. Completed stages are reused. Existing saved lessons are preserved when prompts change; improved prompts apply to newly generated content. Reading, navigation, quizzes, solution reveals, notes, and card reviews make **no AI requests**.
+
+## Data and privacy
+
+By default, SQLite records, uploaded PDFs, provider-response caches, settings, and backups live under `data/`. They are excluded from Git, along with `.env`, local demo assets, temporary output, and development notes. Only the root README is tracked as Markdown. Tests generate small synthetic documents at runtime and need no sample PDFs or API key.
+
+Text extraction and PDF previews run locally. Source excerpts selected for preparation are sent to Gemini. Course ZIPs include your uploaded materials and notes, but exclude API credentials; share them only with intended recipients.
+
+## Limitations
+
+- Uploads currently support text-readable PDFs. Image-only scans need OCR before upload; uncertain extracted symbols should be checked against the original page.
+- Citations use physical PDF page numbers. Valid source locations and coverage maps do not establish that every AI-generated statement is correct or every source detail is covered.
+- AI-generated practice and past-paper solutions are labeled. Uploaded-paper frequency reflects the papers you provided and does not predict future exams.
+- Objective answers use saved answer keys and deterministic scoring. Subjective questions provide solutions for self-review, without automatic grading.
+- Recall estimates depend on distinct answered questions, topic coverage, and first-encounter/recent results. Repeating a small question bank does not establish mastery.
+- This local prototype has no accounts, live tutor chat, cloud synchronization, or hosted multi-user service.
 
 ## Development
 
-See [PLAN.md](PLAN.md) and [AGENTS.md](AGENTS.md). Run tests with `python -m unittest discover -s tests -v`.
+The backend uses Python's HTTP server, SQLite, pypdf, PDFium, and Pillow. The frontend is buildless HTML, CSS, and JavaScript with locally bundled KaTeX.
 
-See [VERIFICATION.md](VERIFICATION.md) for what was checked and the remaining live-provider validation step. Sample PDF authoring is a development-only task (`tools/create_sample.py`) requiring ReportLab; the app uses the committed originals and does not require ReportLab.
-# Detailed teaching preparation
+| File | Purpose |
+| --- | --- |
+| `app.py` | Local HTTP server and API routes |
+| `core.py` | Persistence, validation, backups, and practice scoring |
+| `configuration.py` | Environment and local configuration loading |
+| `generation.py` | Gemini requests, retrieval, caching, and resumable jobs |
+| `prompts.py` | Outline and teaching instructions |
+| `pdfview.py` | Local PDF page previews |
+| `repairs.py` | Reviewed corrections with backups |
+| `web/` | Course map, study reader, practice, and settings interface |
+| `tests/` | Backend and reader regression checks |
 
-New courses use one outline request, then one teaching-plan request per unfinished module and one request per focused lesson (1–8 lessons per module). Each lesson includes its own practice and cards. Plans and completed lessons are saved independently, so resuming does not repeat successful work. Existing saved module packages are preserved; improved prompts apply to new content. See `prompts.py` for the complete teaching instructions.
+Run backend checks with the Python dependencies installed:
 
-Every readable material file receives a reserved outline excerpt budget, and new outlines include an explicit document-to-module map. Coverage maps are planning aids, not proof that every source statement was taught correctly. A missing module can be appended without discarding saved modules; an automatic course backup is made before extension.
+```powershell
+python -m unittest discover -s tests -v
+```
 
-Malformed PDF glyphs are normalized locally while valid mathematical Unicode is preserved. Existing extracted text is backed up before its one-time repair. Some symbols still require consulting the original PDF page; image-only scans still require OCR.
+Run reader checks with Node.js installed; no npm dependencies are required:
 
-Practice progress distinguishes unique first encounters from repeated answers. Repeating a small saved bank does not establish mastery. Strong recall requires at least 12 distinct questions, topic coverage and strong first-encounter/recent results; this remains an estimate within the saved bank.
+```powershell
+node tests/test_reader.mjs
+```
 
-The reader supports safe Markdown and locally bundled KaTeX mathematics, with no CDN or remote font dependency. Older plain-text/Unicode formulas remain as originally saved; LaTeX typesetting is used when mathematical delimiters are present. Graph controls fit the whole map, zoom, pan, and expand it. Practice can focus on a topic, and question/option order is shuffled while server scoring keeps the original answer indices.
+## Third-party attribution
 
-Reviewed source clarifications can accompany original pages and new generation. They are labeled separately from uploaded notes. `tools/apply_corrections.py` applies a reviewed local JSON patch only when the expected original question/section still matches, backs up the course first, and records the correction. This does not automatically establish factual correctness for all generated content.
+[KaTeX](https://katex.org/) 0.19.0 is bundled from its official npm distribution for offline math rendering. Its MIT license is retained in [web/vendor/katex/LICENSE](web/vendor/katex/LICENSE). The browser script, stylesheet, and required fonts are served locally without a runtime CDN.
