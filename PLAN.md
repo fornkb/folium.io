@@ -55,4 +55,6 @@ Text-based PDFs first; image-only scans require OCR before upload. No live tutor
 - [x] Persist a module teaching plan and each focused lesson independently; resume without repeating saved lessons. Preserve existing packages.
 - [x] Safe Markdown and offline mathematical typesetting, compact citations, lesson navigation, and responsive graph/reader layouts.
 - [x] Shuffled assessment presentation, topic drills, unique-question evidence, and transparent corrections of identified content errors.
-- [ ] Back up and repair the live course; add only the missing Quantum Error Correction module. Test, synchronize the running copy, and document results.
+- [x] Back up and repair the live course; add only the missing Quantum Error Correction module. Test, synchronize the running copy, and document results.
+
+Completed follow-up: 46 backend tests and the reader suite pass. The running copy is updated; all eight modules are ready. The new module demonstrates the six-lesson teaching flow. Existing guides were preserved, local corrections were backed up, and an actual complete-course backup round trip passed.

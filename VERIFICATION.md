@@ -3,7 +3,7 @@
 ## Automated checks
 Run: `python -m unittest discover -s tests -v`.
 
-Latest result: **45 Python tests passed**, plus the Node reader suite. The teaching-depth checkpoint adds order-independent document sampling, Unicode recovery with a pre-migration database backup, required-topic plan validation, independent lesson resumption (including backup/import), preserved packages on course extension, unique-question assessment evidence, atomic/idempotent content corrections, and a numerical check of the teleportation correction orders.
+Latest result: **46 Python tests passed**, plus the Node reader suite. The teaching-depth checkpoint adds order-independent document sampling, Unicode recovery with a pre-migration database backup, required-topic plan validation, independent lesson resumption (including backup/import), preserved packages on course extension, unique-question assessment evidence, atomic/idempotent content corrections, and a numerical check of the teleportation correction orders.
 
 The reader suite checks Markdown headings, mixed lists, tables, step spacing, offline fraction/matrix typesetting, escaping of HTML/script payloads, rejection of unsafe math links, and canonical answer indices under shuffled presentation.
 
@@ -35,8 +35,17 @@ Performed in a separate local test workspace so the primary workspace's courses 
 - Keyboard skip-to-content keeps the current module open; the source page selector updates its rendered image as the page number changes.
 
 ## Remaining validation
-Initial implementation used controlled provider responses. The configuration follow-up verified detection of the user's local key, but no live inference request was made as part of this verification. Provider request/response behavior is tested with controlled responses, including quota errors, valid structured output, and persistent caching. The first real course preparation should validate model availability and content quality against the user's actual materials. The free-tier model name is configurable in Settings.
+The initial build used controlled provider responses. The real-course follow-up exercised the configured Gemini connection: one missing module was prepared as a saved plan and six focused lessons, with seven successful cached responses. A temporary 503 on the final lesson paused preparation; resuming reused the plan and five saved lessons and completed only the unfinished lesson. No existing module was regenerated. The configured model remains editable in Settings.
 
 Source checks verify file/page identity and supplied-page membership. They do not establish factual entailment, prove numerical correctness, or turn generated solutions into an official mark scheme. Image-only PDF scans require OCR before upload in this version.
 
 The final assessment regression retains first-encounter outcomes beyond the 30-attempt display/history limit, including export/import. A numerical check confirms the reviewed teleportation correction. The isolated browser fixture typeset inline equations and a fraction/matrix, rendered a Markdown table and focused lesson navigation, with no math fallback.
+
+## Completed real-course follow-up
+
+- All eight modules are ready. The added module contains six focused lessons, 41 teaching sections, roughly 10,400 teaching words, 21 objective questions, seven written problems, and 42 cards.
+- All 653 mathematical expressions in the new lesson sections typeset without fallback. Twelve diagrams are associated with their own lessons.
+- Existing study history and original PDF hashes were checked before/after repairs. Original packages are retained in automatic local backups; corrections are recorded separately.
+- An actual completed-course ZIP was exported and restored into isolated storage. All eight modules, eight PDFs, the teaching plan, annotations, and remapped citations survived restoration.
+- Browser checks confirm the completed eight-node expanded map fits its viewport; the source viewer shows reviewed clarifications beside original pages; and the full new reader has six lesson links, 41 sections, and no horizontal overflow. Tablet contents navigation was verified after constraining its scroll height.
+- Local corrections clarify the known ambiguous physics assessment and balance verbose choices. No claim is made that every answer is independently verified. Improved teaching prompts apply to new content; existing guides were preserved.

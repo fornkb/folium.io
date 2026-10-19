@@ -30,3 +30,4 @@ body.dark{--bg:#1e241f;--surface:#272e27;--sidebar:#202820;--ink:#e3e8dc;--muted
 .graph-layout{grid-template-columns:minmax(0,1fr)}.course-aside{display:grid;grid-template-columns:1fr 1fr;gap:20px}.graph-scroll{height:480px}@media(max-width:650px){.course-aside{grid-template-columns:1fr}.graph-scroll{height:390px}}
 .source-annotation{padding:14px 22px;background:var(--green-soft);font-size:12px;max-height:160px;overflow:auto;flex-shrink:0}.source-annotation p{margin:5px 0}
 .correction-note summary{cursor:pointer;font-weight:600}.prose p>.katex,.prose li>.katex{display:inline-block;max-width:100%;overflow-x:auto;vertical-align:middle}
+@media(min-width:651px){.lesson-toc{max-height:calc(100vh - 60px);overflow:auto}}
