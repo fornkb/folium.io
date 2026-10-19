@@ -14,6 +14,7 @@ from urllib.parse import unquote, urlparse
 
 from core import Store, clean, grade, module_state, review_card, validate_outline
 from generation import Gemini, Jobs, Settings
+from pdfview import render_page
 
 ROOT = Path(__file__).resolve().parent
 MAX_BODY = 80 * 1024 * 1024
@@ -116,6 +117,17 @@ def create_server(data_dir, port=8765, seed=True):
                     if match:
                         file_path, _ = store.document(match[1])
                         return self.send(200, file_path.read_bytes(), "application/pdf")
+                    match = re.fullmatch(r"/api/documents/([a-f0-9]{16})/pages/(\d+)(\.png)?", path)
+                    if match:
+                        file_path,name = store.document(match[1])
+                        page = int(match[2])
+                        if match[3]:
+                            return self.send(200, render_page(file_path, page, store.root / "page_previews"), "image/png")
+                        with store.lock:
+                            pages = json.loads(store.db.execute("SELECT pages FROM documents WHERE id=?",(match[1],)).fetchone()[0])
+                        if not 1 <= page <= len(pages):
+                            raise ValueError("Choose a valid source page.")
+                        return self.send(200,dict(name=name,page=page,text=pages[page-1]))
                     if path.startswith("/api/"):
                         return self.send(404, dict(error="This page could not be found."))
                     relative = path.lstrip("/") or "index.html"

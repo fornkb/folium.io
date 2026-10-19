@@ -212,7 +212,7 @@ class Store:
                     for field in ("read", "bookmarked", "notes", "attempts"):
                         if field in old:
                             module[field] = old[field]
-                course["status"] = "ready" if all(m.get("package") for m in modules) else "outline"
+                course["status"] = "ready" if original.get("status") == "ready" and all(m.get("package") for m in modules) else "outline"
                 # Preserve PYQ-stage completion when resuming an imported course.
                 course["pyq_batches"] = [id_map.get(x.split(":")[0], x.split(":")[0]) + ":" + x.split(":", 1)[1]
                                          for x in original.get("pyq_batches", []) if ":" in x]
@@ -267,7 +267,16 @@ def validate_package(pkg, allowed):
         raise ValueError("The generated lesson is incomplete. Resume to retry this module.")
     if not isinstance(pkg.get("sections"), list) or len(pkg["sections"]) < 3:
         raise ValueError("The generated lesson needs at least three teaching sections.")
+    if not isinstance(pkg.get("objectives"), list) or not pkg["objectives"] or not all(isinstance(x,str) and x.strip() for x in pkg["objectives"]):
+        raise ValueError("The generated lesson needs clear learning objectives.")
+    if not isinstance(pkg.get("diagrams", []), list):
+        raise ValueError("The lesson diagrams could not be read.")
+    for diagram in pkg.get("diagrams", []):
+        if not isinstance(diagram,dict) or not isinstance(diagram.get("nodes"),list) or not 2 <= len(diagram["nodes"]) <= 8 or not all(isinstance(x,str) for x in diagram["nodes"]):
+            raise ValueError("A lesson diagram has an invalid structure.")
     for sec in pkg["sections"]:
+        if not isinstance(sec,dict) or sec.get("kind") not in ("concept","example","formula","pitfall","recap"):
+            raise ValueError("A lesson section has an invalid format.")
         if not clean(sec.get("title")) or not clean(sec.get("body")):
             raise ValueError("The generated lesson has an empty section.")
         for ref in sec.get("sources", []):

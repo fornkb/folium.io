@@ -3,6 +3,7 @@ import io
 import json
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -12,7 +13,7 @@ from unittest.mock import patch
 
 from app import create_server
 from core import Store, grade, module_state, review_card, validate_outline, validate_package
-from generation import Gemini, Jobs, ProviderError, Settings, source_pages
+from generation import Gemini, Jobs, ProviderError, Settings, source_pages, OUTLINE
 from sample import SPECS, sample_package, seed_sample
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -107,8 +108,28 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(new_doc["id"], restored["modules"][0]["package"]["sections"][0]["sources"][0]["doc_id"])
 
     def test_backup_rejects_forged_source_id(self):
+        self.course.update(modules=[self.module()],status="ready")
+        self.store.save(self.course)
+        raw=self.store.export(self.course["id"])
+        with zipfile.ZipFile(io.BytesIO(raw)) as original:
+            manifest=json.loads(original.read("folium.json"))
+            manifest["course"]["modules"][0]["package"]["sections"][0]["sources"][0]["doc_id"]="0000000000000000"
+            altered=io.BytesIO()
+            with zipfile.ZipFile(altered,"w") as z:
+                for name in original.namelist():
+                    z.writestr(name,json.dumps(manifest) if name=="folium.json" else original.read(name))
+        with self.assertRaisesRegex(ValueError,"citation"):
+            self.store.import_course(altered.getvalue())
+
+    def test_invalid_backup_rejected(self):
         with self.assertRaises(ValueError):
             self.store.import_course(b"not a zip")
+
+    def test_import_preserves_unfinished_generation(self):
+        self.course.update(modules=[self.module()],status="outline")
+        self.store.save(self.course)
+        restored=self.store.import_course(self.store.export(self.course["id"]))
+        self.assertEqual("outline",restored["status"])
 
     def test_retrieval_keeps_physical_page_metadata(self):
         selected = source_pages([self.doc], "binary search trees", budget=1500)
@@ -221,6 +242,61 @@ class HttpTests(unittest.TestCase):
             self.request(f"/api/courses/{course['id']}/modules/{module['id']}/progress", dict(read=True, notes="Saved locally"))
             result = self.request(f"/api/courses/{course['id']}/modules/{module['id']}/quiz", dict(answers=answers))
             self.assertEqual(4, result["result"]["correct"])
+
+    def upload(self,title,files):
+        boundary="folium-test-boundary"
+        parts=[]
+        for key,value in dict(title=title,roles=json.dumps([f[2] for f in files])).items():
+            parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode())
+        for name,raw,role in files:
+            parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="files"; filename="{name}"\r\nContent-Type: application/pdf\r\n\r\n'.encode()+raw+b'\r\n')
+        parts.append(f'--{boundary}--\r\n'.encode())
+        req=urllib.request.Request(self.url+"/api/courses",data=b''.join(parts),headers={"Content-Type":"multipart/form-data; boundary="+boundary})
+        with urllib.request.urlopen(req) as response:
+            return json.load(response)
+
+    def wait_job(self,cid):
+        for _ in range(160):
+            course=self.request("/api/courses/"+cid)
+            if course["job"]["state"]!="running":return course
+            time.sleep(.03)
+        self.fail("The test preparation job did not finish.")
+
+    def test_upload_outline_generate_study_end_to_end(self):
+        course=self.upload("Integration course",[("notes.pdf",(ROOT/"sample_sources/Course-notes.pdf").read_bytes(),"material")])
+        cid=course["id"]
+        doc=course["documents"][0]
+        def generate(prompt,schema,validator):
+            if schema==OUTLINE:
+                return validator(dict(description="Test outline",modules=[dict(id="m1",title="Complexity",description="Growth",topics=["Big O"],prerequisites=[])]))
+            return validator(sample_package(SPECS[0],doc["id"],1))
+        with patch.object(self.server.jobs.provider,"generate",side_effect=generate) as provider:
+            self.request(f"/api/courses/{cid}/prepare",dict(action="outline"))
+            course=self.wait_job(cid)
+            self.assertEqual("outline",course["status"])
+            self.request(f"/api/courses/{cid}/outline",dict(modules=course["modules"]))
+            self.request(f"/api/courses/{cid}/prepare",dict(action="generate"))
+            course=self.wait_job(cid)
+            self.assertEqual("ready",course["status"])
+            self.assertEqual(2,provider.call_count)
+            self.request(f"/api/courses/{cid}/prepare",dict(action="generate"))
+            self.assertEqual(2,provider.call_count)
+        text=self.request(f"/api/documents/{doc['id']}/pages/1")
+        self.assertIn("Complexity",text["text"])
+        with urllib.request.urlopen(self.url+f"/api/documents/{doc['id']}/pages/1.png") as response:
+            self.assertTrue(response.read().startswith(b'\x89PNG\r\n\x1a\n'))
+
+    def test_upload_failure_rolls_back_new_course(self):
+        count=len(self.request("/api/courses"))
+        with self.assertRaises(urllib.error.HTTPError):
+            self.upload("Bad upload",[("good.pdf",(ROOT/"sample_sources/Course-outline.pdf").read_bytes(),"syllabus"),("bad.pdf",b"bad","material")])
+        self.assertEqual(count,len(self.request("/api/courses")))
+
+    def test_invalid_source_page_rejected(self):
+        c=self.request("/api/courses")[0]
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            self.request(f"/api/documents/{c['documents'][0]['id']}/pages/999")
+        self.assertEqual(400,error.exception.code)
 
 
 if __name__ == "__main__":
