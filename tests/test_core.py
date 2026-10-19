@@ -95,6 +95,8 @@ class CoreTests(unittest.TestCase):
     def test_backup_round_trip_and_no_credentials(self):
         self.course.update(modules=[self.module()], status="ready")
         self.course["modules"][0].update(notes="My own note", bookmarked=True)
+        module=self.course["modules"][0]
+        grade(module,{q["id"]:q["correct_index"] for q in module["package"]["questions"] if q["type"]=="objective"})
         self.store.save(self.course)
         Settings(self.store.root).save(dict(api_key="secret-key"))
         backup = self.store.export(self.course["id"])
@@ -103,6 +105,7 @@ class CoreTests(unittest.TestCase):
         restored = self.store.import_course(backup)
         self.assertNotEqual(restored["id"], self.course["id"])
         self.assertEqual("My own note", restored["modules"][0]["notes"])
+        self.assertEqual(module["question_evidence"],restored["modules"][0]["question_evidence"])
         new_doc = self.store.docs(restored["id"])[0]
         self.assertNotEqual(self.doc["id"], new_doc["id"])
         self.assertEqual(new_doc["id"], restored["modules"][0]["package"]["sections"][0]["sources"][0]["doc_id"])

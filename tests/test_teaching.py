@@ -76,6 +76,7 @@ class TeachingTests(unittest.TestCase):
             self.assertEqual(["plan","A","B","B"],fake.calls)
             module=store.course(course["id"])["modules"][0]
             self.assertEqual(2,len(module["package"]["coverage_map"]))
+            self.assertEqual(2,len(module["package"]["teaching_plan"]["lessons"]))
             self.assertEqual(len(module["package"]["questions"]),len({q["id"] for q in module["package"]["questions"]}))
             store.close()
 
@@ -126,6 +127,14 @@ class TeachingTests(unittest.TestCase):
         self.assertEqual("mastered",module_state(module))
         module["package"]["questions"][0]["question"]="Revised question"
         self.assertEqual(0,assessment_evidence(module)["unique"])
+
+    def test_first_encounters_outlive_the_recent_attempt_limit(self):
+        module=dict(topics=["A"],package=dict(questions=[dict(id=f"q{i}",type="objective",question=f"Question {i}",options=["a","b"],correct_index=0,solution="a",topic="A") for i in range(12)]))
+        grade(module,{f"q{i}":1 for i in range(12)})
+        for _ in range(35):grade(module,{f"q{i}":0 for i in range(12)})
+        self.assertEqual(30,len(module["attempts"]))
+        self.assertEqual(0,assessment_evidence(module)["first_correct"])
+        self.assertEqual("learning",module_state(module))
 
     def test_course_extension_preserves_saved_packages_and_creates_backup(self):
         with test_directory() as folder:

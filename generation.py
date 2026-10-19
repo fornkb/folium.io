@@ -311,7 +311,7 @@ class Jobs:
                 lesson_pkg["source_pages"] = [dict(doc_id=p["doc_id"], page=p["page"]) for p in lesson_pages]
                 preparation["lessons"][lesson["id"]] = lesson_pkg
                 self.store.update(cid, lambda c: next(m for m in c["modules"] if m["id"] == module["id"]).update(preparation=preparation))
-            pkg = dict(overview=plan["overview"], objectives=plan["objectives"], sections=[], diagrams=[], questions=[], flashcards=[], source_pages=[], coverage_notes="", coverage_map=[], generation_version=VERSION)
+            pkg = dict(overview=plan["overview"], objectives=plan["objectives"], teaching_plan=plan, sections=[], diagrams=[], questions=[], flashcards=[], source_pages=[], coverage_notes="", coverage_map=[], generation_version=VERSION)
             gaps = []
             for lesson in plan["lessons"]:
                 part = preparation["lessons"][lesson["id"]]

@@ -282,6 +282,9 @@ class Store:
                     except (KeyError,TypeError,ValueError):
                         raise ValueError("Invalid review date in backup.") from None
                 for old in original["modules"]:
+                    evidence = old.get("question_evidence")
+                    if evidence is not None and (not isinstance(evidence,dict) or not isinstance(evidence.get("version"),str) or not isinstance(evidence.get("first"),dict) or len(evidence["first"])>100 or any(not isinstance(key,str) or type(value) is not bool for key,value in evidence["first"].items())):
+                        raise ValueError("Invalid first-encounter evidence in backup.")
                     if not isinstance(old.get("notes",""),str) or len(old.get("notes","")) > 30000:
                         raise ValueError("Invalid personal notes in backup.")
                     attempts = old.get("attempts", [])
@@ -303,7 +306,7 @@ class Store:
                     if field in original:
                         course[field] = remap(original[field])
                 for module, old in zip(course["modules"], original["modules"]):
-                    for field in ("read", "bookmarked", "notes", "attempts"):
+                    for field in ("read", "bookmarked", "notes", "attempts", "question_evidence"):
                         if field in old:
                             module[field] = old[field]
                 course["status"] = "ready" if original.get("status") == "ready" and all(m.get("package") for m in modules) else "outline"
@@ -405,15 +408,22 @@ def bank_version(module):
     return hashlib.sha256(json.dumps(bank, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def assessment_evidence(module):
+def first_encounters(module):
     questions = {q["id"]:q for q in module.get("package", {}).get("questions", []) if q["type"] == "objective"}
-    first = {}
+    record = module.get("question_evidence", {})
+    first = {qid:value for qid,value in record.get("first", {}).items() if qid in questions and type(value) is bool} if record.get("version") == bank_version(module) else {}
     for attempt in module.get("attempts", []):
         if attempt.get("bank_version") != bank_version(module):
             continue
         for result in attempt.get("results", []):
             if result.get("id") in questions:
                 first.setdefault(result["id"], result.get("correct") is True)
+    return first
+
+
+def assessment_evidence(module):
+    questions = {q["id"]:q for q in module.get("package", {}).get("questions", []) if q["type"] == "objective"}
+    first = first_encounters(module)
     topics = {questions[qid].get("topic") for qid in first}
     return dict(unique=len(first), bank_size=len(questions), first_correct=sum(first.values()),
                 topics=len(topics & set(module.get("topics", []))), total_topics=len(module.get("topics", [])))
@@ -451,7 +461,11 @@ def grade(module, answers, question_ids=None):
             raise ValueError("Choose a valid option for every question.")
         results.append(dict(id=q["id"], selected=answer, correct_index=q["correct_index"],
                             correct=answer == q["correct_index"], solution=q["solution"]))
-    previous = assessment_evidence(module)["unique"]
+    first = first_encounters(module)
+    previous = len(first)
+    for result in results:
+        first.setdefault(result["id"], result["correct"])
+    module["question_evidence"] = dict(version=bank_version(module), first=first)
     attempt = dict(date=now(), correct=sum(r["correct"] for r in results), total=len(results), results=results, bank_version=bank_version(module))
     module.setdefault("attempts", []).append(attempt)
     module["attempts"] = module["attempts"][-30:]

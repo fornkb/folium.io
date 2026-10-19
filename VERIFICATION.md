@@ -3,7 +3,7 @@
 ## Automated checks
 Run: `python -m unittest discover -s tests -v`.
 
-Latest result: **44 Python tests passed**, plus the Node reader suite. The teaching-depth checkpoint adds order-independent document sampling, Unicode recovery with a pre-migration database backup, required-topic plan validation, independent lesson resumption (including backup/import), preserved packages on course extension, unique-question assessment evidence, atomic/idempotent content corrections, and a numerical check of the teleportation correction orders.
+Latest result: **45 Python tests passed**, plus the Node reader suite. The teaching-depth checkpoint adds order-independent document sampling, Unicode recovery with a pre-migration database backup, required-topic plan validation, independent lesson resumption (including backup/import), preserved packages on course extension, unique-question assessment evidence, atomic/idempotent content corrections, and a numerical check of the teleportation correction orders.
 
 The reader suite checks Markdown headings, mixed lists, tables, step spacing, offline fraction/matrix typesetting, escaping of HTML/script payloads, rejection of unsafe math links, and canonical answer indices under shuffled presentation.
 
@@ -38,3 +38,5 @@ Performed in a separate local test workspace so the primary workspace's courses 
 Initial implementation used controlled provider responses. The configuration follow-up verified detection of the user's local key, but no live inference request was made as part of this verification. Provider request/response behavior is tested with controlled responses, including quota errors, valid structured output, and persistent caching. The first real course preparation should validate model availability and content quality against the user's actual materials. The free-tier model name is configurable in Settings.
 
 Source checks verify file/page identity and supplied-page membership. They do not establish factual entailment, prove numerical correctness, or turn generated solutions into an official mark scheme. Image-only PDF scans require OCR before upload in this version.
+
+The final assessment regression retains first-encounter outcomes beyond the 30-attempt display/history limit, including export/import. A numerical check confirms the reviewed teleportation correction. The isolated browser fixture typeset inline equations and a fraction/matrix, rendered a Markdown table and focused lesson navigation, with no math fallback.
