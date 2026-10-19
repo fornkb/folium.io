@@ -1,0 +1,127 @@
+"""Read local configuration without executing .env content or exposing credentials."""
+from __future__ import annotations
+
+import json
+import os
+import re
+import threading
+from pathlib import Path
+
+from core import clean
+
+CONFIG_KEYS = ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_MODEL", "FOLIUM_PORT")
+
+
+def environment_values():
+    """Include persisted Windows variables added after the parent app started."""
+    values = {key: os.environ.get(key, "").strip() for key in CONFIG_KEYS}
+    if os.name == "nt":
+        import winreg
+        locations = ((winreg.HKEY_CURRENT_USER, "Environment"),
+                     (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"))
+        for hive, path in locations:
+            try:
+                with winreg.OpenKey(hive, path) as registry:
+                    for key in CONFIG_KEYS:
+                        if values[key]:
+                            continue
+                        try:
+                            value, _ = winreg.QueryValueEx(registry, key)
+                            if isinstance(value, str):
+                                values[key] = value.strip()
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+    return {key:value for key,value in values.items() if value}
+
+
+def dotenv_values(path):
+    """Support KEY=value, optional export, quotes, and comments; no interpolation."""
+    try:
+        text = Path(path).read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        return {}
+    result = {}
+    for line in text.splitlines():
+        match = re.fullmatch(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*", line)
+        if not match or match[1] not in CONFIG_KEYS:
+            continue
+        value = match[2]
+        if value.startswith(('"', "'")):
+            quoted = re.fullmatch(r"([\"'])(.*?)\1\s*(?:#.*)?", value)
+            if not quoted:
+                continue
+            value = quoted[2]
+        else:
+            value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
+        if value:
+            result[match[1]] = value
+    return result
+
+
+def env_path(explicit=None):
+    configured = explicit or os.environ.get("FOLIUM_ENV_FILE")
+    return Path(configured).expanduser().resolve() if configured else Path(__file__).resolve().parent / ".env"
+
+
+def configured_values(path):
+    values = dotenv_values(path)
+    sources = {key:"env_file" for key in values}
+    inherited = environment_values()
+    values.update(inherited)
+    sources.update({key:"environment" for key in inherited})
+    return values, sources
+
+
+class Settings:
+    def __init__(self, root, env_file=None):
+        self.path = Path(root) / "settings.json"
+        self.env_file = env_path(env_file)
+        self.lock = threading.Lock()
+
+    def _saved(self):
+        try:
+            value = json.loads(self.path.read_text("utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def get(self):
+        with self.lock:
+            value = self._saved()
+        external, sources = configured_values(self.env_file)
+        saved_key = str(value.get("api_key") or "").strip()
+        # A blank saved field must not hide a valid environment key.
+        key_name = next((name for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY") if external.get(name)), None)
+        value["api_key"] = saved_key or (external[key_name] if key_name else "")
+        value["key_source"] = "settings" if saved_key else sources.get(key_name)
+        value["has_saved_key"] = bool(saved_key)
+        value["model"] = value.get("model") or external.get("GEMINI_MODEL") or "gemini-3.8-flash"
+        value.setdefault("interval", 6)
+        return value
+
+    def public(self):
+        value = self.get()
+        return dict(has_key=bool(value["api_key"]), model=value["model"], interval=value["interval"],
+                    key_source=value["key_source"], has_saved_key=value["has_saved_key"],
+                    env_file_found=self.env_file.is_file())
+
+    def save(self, body):
+        effective = self.get()
+        model = clean(body.get("model", effective["model"]), 100)
+        if not re.fullmatch(r"gemini-[a-zA-Z0-9.\-]+", model):
+            raise ValueError("Enter a valid Gemini model name.")
+        interval = max(3, min(60, int(body.get("interval", effective["interval"]))))
+        with self.lock:
+            # Save only explicit settings. Never copy an external key into this file.
+            saved = self._saved()
+            if body.get("api_key"):
+                saved["api_key"] = clean(body["api_key"], 300)
+            if body.get("clear_key"):
+                saved.pop("api_key", None)
+            saved["model"], saved["interval"] = model, interval
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(saved), "utf-8")
+            tmp.replace(self.path)
+        return self.public()

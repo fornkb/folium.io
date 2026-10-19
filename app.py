@@ -14,15 +14,16 @@ from urllib.parse import unquote, urlparse
 
 from core import Store, clean, grade, module_state, review_card, validate_outline
 from generation import Gemini, Jobs, Settings
+from configuration import configured_values, env_path
 from pdfview import render_page
 
 ROOT = Path(__file__).resolve().parent
 MAX_BODY = 80 * 1024 * 1024
 
 
-def create_server(data_dir, port=8765, seed=True):
+def create_server(data_dir, port=8765, seed=True, env_file=None):
     store = Store(data_dir)
-    settings = Settings(store.root)
+    settings = Settings(store.root, env_file=env_file)
     jobs = Jobs(store, Gemini(store, settings))
     if seed:
         from sample import seed_sample
@@ -224,10 +225,13 @@ def create_server(data_dir, port=8765, seed=True):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Folium locally.")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("FOLIUM_PORT", 8765)))
+    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--env-file", type=Path, default=None, help="Optional path to a .env configuration file.")
     parser.add_argument("--data-dir", type=Path, default=ROOT / "data")
     args = parser.parse_args()
-    server = create_server(args.data_dir, args.port)
+    configured, _ = configured_values(env_path(args.env_file))
+    port = args.port if args.port is not None else int(configured.get("FOLIUM_PORT", 8765))
+    server = create_server(args.data_dir, port, env_file=args.env_file)
     print(f"\n  Folium is ready at http://127.0.0.1:{server.server_port}\n  Your courses are saved in {args.data_dir.resolve()}\n", flush=True)
     try:
         server.serve_forever()

@@ -43,3 +43,9 @@ Text-based PDFs first; image-only scans require OCR before upload. No live tutor
 - The sample course includes original illustrative PDF sources with verified physical page mappings. It is not a real past examination.
 - Interface checkpoint: complete local library, prerequisite graph, outline and source library, lesson reader with flow diagrams, question interfaces, saved modules, notes, revision, connection settings, and upload/outline editing. PDF page previews render locally to avoid browser plug-in dependence. All 24 backend/integration checks pass, including upload-to-study with a simulated provider and actual PDF rendering.
 - Final checkpoint: 25 automated checks pass; JavaScript syntax and whitespace checks pass. Browser checks cover upload, outline editing, study/practice, notes/reload, cards, search/bookmarks, source image/text/page navigation, backup round trips, dark appearance, keyboard skip navigation, and a 390-pixel lesson layout. See VERIFICATION.md. Live Gemini inference remains untested because no real key was supplied.
+
+## Follow-up: environment configuration
+- Fixed automatic loading of the `.env` beside the running app, including when the repository is copied to another folder.
+- Added both Gemini key variable names, source labels in Settings, blank-setting fallback, Windows persisted-variable detection, and an explicit `--env-file` option.
+- Environment keys are not copied into settings when saving other preferences, and never appear in public configuration responses.
+- All 33 automated checks pass, including eight configuration regressions. The user's real key was detected locally without making an inference call.

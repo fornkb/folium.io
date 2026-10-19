@@ -11,11 +11,15 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-Open http://127.0.0.1:8765. The built-in sample course needs no API key. Add your Gemini key in Settings when you want to prepare your own course. The key stays on the local server in ignored runtime settings, never in browser storage or backups. This is a personal local prototype: anyone with access to the computer's data folder can read those settings and course files.
+Open http://127.0.0.1:8765. The built-in sample course needs no API key. To prepare your own course, copy `.env.example` to `.env` in the same folder as `app.py`, then fill in `GEMINI_API_KEY`. Folium reads that file automatically. `GOOGLE_API_KEY` is also supported. Alternatively, use an environment variable or enter a key in Settings. Keys never enter browser storage or course backups. This is a personal local prototype: anyone with access to the computer's files can read local configuration and course files.
 
 On this Windows computer, you can also double-click **start.bat**. It prefers a project virtual environment or the bundled Python runtime, then falls back to your system Python. Keep the server window open while using Folium. Closing it stops the app; the data remains saved.
 
-Use `--port 8766` to choose another port, and `--data-dir <path>` for another local storage folder. The server binds to 127.0.0.1 only. It does not load `.env` automatically; set environment variables in your shell or use Settings.
+Use `--port 8766` to choose another port, `--data-dir <path>` for another local storage folder, and `--env-file <path>` when your `.env` is elsewhere. The server binds to 127.0.0.1 only.
+
+Settings shows whether the active key comes from the `.env` file, environment variables, or a key saved in Settings. A saved key takes precedence; otherwise `GEMINI_API_KEY` takes precedence over `GOOGLE_API_KEY`. Environment variables take precedence over the same variable in `.env`. Empty saved key fields do not mask an environment key. Saving model options does not copy an environment key into local settings.
+
+The `.env` file is reread when configuration is needed, so changing its key does not require another server restart once this version is running. Refresh the browser to update the connection indicator. Windows user/system environment variables are also checked if the running process inherited no value.
 
 ## How a course works
 

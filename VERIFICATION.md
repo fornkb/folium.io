@@ -3,13 +3,15 @@
 ## Automated checks
 Run: `python -m unittest discover -s tests -v`.
 
-Final result: **25 tests passed**.
+Latest result: **33 tests passed**, including eight configuration regression checks added after the initial build.
 
 The suite covers local PDF extraction, upload deduplication and rollback, prerequisite validation, source-page validation, practice answer keys and scoring, reading versus mastery, flashcard schedules, durable provider caching after reopening storage, quota handling, interrupted-job recovery, generation resumption without repeating completed modules, backup export/import and state validation, secret exclusion, and cross-origin write rejection.
 
 The integration flow uploads a real local PDF, prepares an outline using a simulated provider, saves the reviewed outline, prepares a module, verifies that requesting preparation again makes no provider call, retrieves extracted page text, and renders the original PDF page to PNG.
 
 JavaScript modules are syntax-checked with `node --check`.
+
+Configuration checks cover `.env` parsing, quotes/comments/BOM, live file rereading, environment precedence, both key variable names, blank saved settings, explicit overrides, safe removal, credential-free public metadata, and avoiding duplicate credential storage. The user's copied app's actual `.env` was checked for key presence without printing or transmitting the key.
 
 ## Browser checks
 Performed in a separate local test workspace so the primary workspace's courses and progress remain untouched.
@@ -29,6 +31,6 @@ Performed in a separate local test workspace so the primary workspace's courses 
 - Keyboard skip-to-content keeps the current module open; the source page selector updates its rendered image as the page number changes.
 
 ## Remaining validation
-No real Gemini key was provided during implementation. No live inference request has been made or billed. Provider request/response behavior is tested with controlled responses, including quota errors, valid structured output, and persistent caching. The first real course preparation should validate model availability and content quality against the user's actual materials. The free-tier model name is configurable in Settings.
+Initial implementation used controlled provider responses. The configuration follow-up verified detection of the user's local key, but no live inference request was made as part of this verification. Provider request/response behavior is tested with controlled responses, including quota errors, valid structured output, and persistent caching. The first real course preparation should validate model availability and content quality against the user's actual materials. The free-tier model name is configurable in Settings.
 
 Source checks verify file/page identity and supplied-page membership. They do not establish factual entailment, prove numerical correctness, or turn generated solutions into an official mark scheme. Image-only PDF scans require OCR before upload in this version.

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import threading
 import time
@@ -12,6 +11,7 @@ import urllib.request
 from collections import Counter
 
 from core import clean, now, validate_outline, validate_package
+from configuration import Settings
 
 
 S = {"type": "STRING"}
@@ -36,44 +36,6 @@ PYQ_SCHEMA = obj(dict(questions=array(obj(dict(question=S, module_ids=array(S), 
 
 class ProviderError(Exception):
     pass
-
-
-class Settings:
-    def __init__(self, root):
-        self.path = root / "settings.json"
-        self.lock = threading.Lock()
-
-    def get(self):
-        with self.lock:
-            try:
-                value = json.loads(self.path.read_text("utf-8"))
-            except (FileNotFoundError, json.JSONDecodeError):
-                value = {}
-        value.setdefault("api_key", os.environ.get("GEMINI_API_KEY", ""))
-        value.setdefault("model", os.environ.get("GEMINI_MODEL", "gemini-3.8-flash"))
-        value.setdefault("interval", 6)
-        return value
-
-    def public(self):
-        value = self.get()
-        return dict(has_key=bool(value["api_key"]), model=value["model"], interval=value["interval"])
-
-    def save(self, body):
-        value = self.get()
-        if "api_key" in body and body["api_key"]:
-            value["api_key"] = clean(body["api_key"], 300)
-        if body.get("clear_key"):
-            value["api_key"] = ""
-        model = clean(body.get("model", value["model"]), 100)
-        if not re.fullmatch(r"gemini-[a-zA-Z0-9.\-]+", model):
-            raise ValueError("Enter a valid Gemini model name.")
-        value["model"] = model
-        value["interval"] = max(3, min(60, int(body.get("interval", value["interval"]))))
-        with self.lock:
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(value), "utf-8")
-            tmp.replace(self.path)
-        return self.public()
 
 
 class Gemini:
