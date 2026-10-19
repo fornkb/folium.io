@@ -77,6 +77,7 @@ class TeachingTests(unittest.TestCase):
             module=store.course(course["id"])["modules"][0]
             self.assertEqual(2,len(module["package"]["coverage_map"]))
             self.assertEqual(2,len(module["package"]["teaching_plan"]["lessons"]))
+            self.assertEqual({"l1","l2"},{d["lesson_id"] for d in module["package"]["diagrams"]})
             self.assertEqual(len(module["package"]["questions"]),len({q["id"] for q in module["package"]["questions"]}))
             store.close()
 

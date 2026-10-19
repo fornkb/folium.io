@@ -197,6 +197,13 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(2, fake.calls)
         self.assertEqual("ready", self.store.course(self.course["id"])["status"])
 
+    def test_temporary_provider_failure_keeps_resume_explicit(self):
+        settings=Settings(self.store.root);settings.save(dict(api_key="test-only"))
+        with patch("urllib.request.urlopen",side_effect=urllib.error.HTTPError("",503,"busy",{},None)) as request:
+            with self.assertRaisesRegex(ProviderError,"temporarily busy"):
+                Gemini(self.store,settings).generate("one unfinished lesson",{})
+            self.assertEqual(1,request.call_count)
+
     def test_restart_marks_inflight_work_paused(self):
         self.course["job"] = dict(state="running", stage="lessons")
         self.store.save(self.course)

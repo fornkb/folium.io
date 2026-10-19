@@ -69,6 +69,8 @@ class Gemini:
                 with urllib.request.urlopen(req, timeout=240) as response:
                     result = json.load(response)
             except urllib.error.HTTPError as exc:
+                if exc.code in (500, 502, 503, 504):
+                    raise ProviderError("Gemini is temporarily busy or unavailable. Completed lessons are saved. Wait a moment, then select Resume.") from None
                 if exc.code == 429:
                     raise ProviderError("Gemini's free quota or rate limit was reached. Completed work is saved. Wait for your quota to reset, then select Resume.") from None
                 if exc.code in (401, 403):
@@ -317,7 +319,8 @@ class Jobs:
                 part = preparation["lessons"][lesson["id"]]
                 start = len(pkg["sections"])
                 pkg["sections"].extend(dict(s, lesson_id=lesson["id"], lesson_title=lesson["title"]) for s in part["sections"])
-                for key in ("diagrams", "questions", "flashcards", "source_pages"):
+                pkg["diagrams"].extend(dict(d, lesson_id=lesson["id"]) for d in part.get("diagrams", []))
+                for key in ("questions", "flashcards", "source_pages"):
                     pkg[key].extend(part.get(key, []))
                 if part.get("coverage_notes"):
                     gaps.append(part["coverage_notes"])

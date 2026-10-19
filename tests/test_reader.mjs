@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {renderText,inlineText} from '../web/reader.js';
-import {practice} from '../web/ui.js';
+import {practice,studyGuide,flashcard} from '../web/ui.js';
 const require=createRequire(import.meta.url);
 globalThis.katex=require('../web/vendor/katex/katex.min.js');
 
@@ -24,4 +24,9 @@ const quiz={answers:{q1:0},order:['q1'],options:{q1:[1,0]}};
 const view=practice({demo:false},module,quiz);
 assert.match(view,/value="1"[^>]*>.*?option-letter">A<\/span><span>One/s);
 assert.match(view,/value="0"[^>]*checked[^>]*>.*?option-letter">B<\/span><span>Zero/s);
+const guide=studyGuide({id:'course',documents:[],modules:[]},{id:'module',topics:['A','B'],prerequisites:[],package:{overview:'Overview',objectives:['Learn'],sections:Array.from({length:6},(_,i)=>({title:`Section ${i}`,body:'Content',kind:'concept',sources:[],lesson_id:i<3?'l1':'l2',lesson_title:i<3?'First':'Second'})),diagrams:[{title:'First diagram',nodes:['A','B'],lesson_id:'l1'},{title:'Second diagram',nodes:['C','D'],lesson_id:'l2'}]}});
+assert.ok(guide.indexOf('Second diagram')>guide.indexOf('id="section-5"'));
+assert.ok(guide.indexOf('First diagram')<guide.indexOf('id="section-3"'));
+const card=flashcard({cards:[{module:'Math',card:{front:'State \\(x\\)',back:'\\[x^2\\]'}}],pos:0,flipped:true});
+assert.match(card,/katex-display/);
 console.log('Reader safety, Markdown, offline math, and shuffled canonical options passed.');
