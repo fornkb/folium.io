@@ -45,3 +45,12 @@ The `.env` file is reread when configuration is needed, so changing its key does
 See [PLAN.md](PLAN.md) and [AGENTS.md](AGENTS.md). Run tests with `python -m unittest discover -s tests -v`.
 
 See [VERIFICATION.md](VERIFICATION.md) for what was checked and the remaining live-provider validation step. Sample PDF authoring is a development-only task (`tools/create_sample.py`) requiring ReportLab; the app uses the committed originals and does not require ReportLab.
+# Detailed teaching preparation
+
+New courses use one outline request, then one teaching-plan request per unfinished module and one request per focused lesson (1–8 lessons per module). Each lesson includes its own practice and cards. Plans and completed lessons are saved independently, so resuming does not repeat successful work. Existing saved module packages are preserved; improved prompts apply to new content. See `prompts.py` for the complete teaching instructions.
+
+Every readable material file receives a reserved outline excerpt budget, and new outlines include an explicit document-to-module map. Coverage maps are planning aids, not proof that every source statement was taught correctly. A missing module can be appended without discarding saved modules; an automatic course backup is made before extension.
+
+Malformed PDF glyphs are normalized locally while valid mathematical Unicode is preserved. Existing extracted text is backed up before its one-time repair. Some symbols still require consulting the original PDF page; image-only scans still require OCR.
+
+Practice progress distinguishes unique first encounters from repeated answers. Repeating a small saved bank does not establish mastery. Strong recall requires at least 12 distinct questions, topic coverage and strong first-encounter/recent results; this remains an estimate within the saved bank.

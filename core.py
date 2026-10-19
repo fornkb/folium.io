@@ -25,7 +25,13 @@ def uid():
 
 
 def clean(value, limit=1000):
-    return str(value or "").strip()[:limit]
+    return safe_text(str(value or "")).strip()[:limit]
+
+
+def safe_text(text):
+    """Recover valid surrogate pairs and replace broken PDF glyphs, preserving math."""
+    text = str(text).encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace")
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
 
 
 class Store:
@@ -43,6 +49,24 @@ class Store:
             CREATE TABLE IF NOT EXISTS cache(key TEXT PRIMARY KEY, data TEXT NOT NULL);
         """)
         self.db.commit()
+        self._repair_extraction()
+
+    def _repair_extraction(self):
+        changes = []
+        for doc_id, raw in self.db.execute("SELECT id,pages FROM documents"):
+            pages = json.loads(raw)
+            repaired = [safe_text(p) for p in pages]
+            if pages != repaired:
+                changes.append((json.dumps(repaired), doc_id))
+        if changes:
+            folder = self.root / "backups"
+            folder.mkdir(exist_ok=True)
+            # Retain the exact previous text and course state before the one-time repair.
+            backup = sqlite3.connect(folder / ("before-text-repair-" + uid() + ".db"))
+            self.db.backup(backup)
+            backup.close()
+            with self.db:
+                self.db.executemany("UPDATE documents SET pages=? WHERE id=?", changes)
 
     def close(self):
         self.db.close()
@@ -90,6 +114,7 @@ class Store:
         course = self.course(course_id)
         course["documents"] = [dict(id=d["id"], name=d["name"], role=d["role"],
                                    page_count=len(d["pages"]),
+                                   text_warning_pages=sum("\ufffd" in p for p in d["pages"]),
                                    readable_pages=sum(bool(p.strip()) for p in d["pages"]))
                                for d in self.docs(course_id)]
         return course
@@ -109,7 +134,7 @@ class Store:
                 raise ValueError("This PDF is password protected. Upload an unlocked copy.")
             if len(reader.pages) > 600:
                 raise ValueError("Use PDFs with 600 pages or fewer for this prototype.")
-            pages = [(p.extract_text() or "").strip() for p in reader.pages]
+            pages = [safe_text(p.extract_text() or "").strip() for p in reader.pages]
         except ValueError:
             raise
         except Exception as exc:
@@ -153,10 +178,30 @@ class Store:
         docs = self.docs(course_id)
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("folium.json", json.dumps(dict(version=1, course=course, documents=docs), ensure_ascii=False))
+            z.writestr("folium.json", json.dumps(dict(version=1, course=course, documents=docs)))
             for doc in docs:
                 z.write(self.document(doc["id"])[0], "documents/" + doc["id"] + ".pdf")
         return stream.getvalue()
+
+    def backup(self, course_id, reason="before-change"):
+        folder = self.root / "backups"
+        folder.mkdir(exist_ok=True)
+        path = folder / (course_id + "-" + reason + "-" + uid() + ".folium.zip")
+        path.write_bytes(self.export(course_id))
+        return path
+
+    def extend(self, course_id, new_modules):
+        with self.lock:
+            course = self.course(course_id)
+            combined = validate_outline(course["modules"] + new_modules)
+            if len(combined) == len(course["modules"]):
+                raise ValueError("Add at least one missing module.")
+            self.backup(course_id, "before-extension")
+            course["modules"].extend(combined[len(course["modules"]):])
+            course["status"] = "outline"
+            course["job"] = None
+            self.save(course)
+            return course
 
     def import_course(self, content):
         try:
@@ -184,7 +229,7 @@ class Store:
                     raw = z.read("documents/" + doc["id"] + ".pdf")
                     if len(raw) > 25 * 1024 * 1024 or not raw.startswith(b"%PDF-"):
                         raise ValueError("Invalid PDF in backup.")
-                    pages = [(p.extract_text() or "").strip() for p in PdfReader(io.BytesIO(raw)).pages]
+                    pages = [safe_text(p.extract_text() or "").strip() for p in PdfReader(io.BytesIO(raw)).pages]
                     if not 1 <= len(pages) <= 600 or sum(map(len, pages)) > 3_000_000:
                         raise ValueError("Invalid page count in backup.")
                     new_id = uid()
@@ -195,10 +240,21 @@ class Store:
                 allowed = {(old, p + 1) for old, d in original_docs.items()
                            for p in range(len(next(n[0]["pages"] for n in prepared if n[0]["id"] == id_map[old])))}
                 for module in modules:
-                    pkg = original["modules"][next(i for i,m in enumerate(original["modules"]) if m["id"] == module["id"])].get("package")
+                    old_module = original["modules"][next(i for i,m in enumerate(original["modules"]) if m["id"] == module["id"])]
+                    pkg = old_module.get("package")
                     if pkg:
                         validate_package(pkg, allowed)
                         module["package"] = pkg
+                    preparation = old_module.get("preparation")
+                    if preparation and not pkg:
+                        from generation import validate_plan
+                        validate_plan(preparation["plan"], module["topics"])
+                        lesson_ids = {l["id"] for l in preparation["plan"]["lessons"]}
+                        if not isinstance(preparation.get("lessons"), dict) or any(lid not in lesson_ids for lid in preparation["lessons"]):
+                            raise ValueError("Invalid unfinished lessons in backup.")
+                        for part in preparation["lessons"].values():
+                            validate_package(part, allowed)
+                        module["preparation"] = preparation
                 module_ids = {m["id"] for m in modules}
                 pyqs = original.get("pyqs", [])
                 if not isinstance(pyqs,list):
@@ -236,6 +292,9 @@ class Store:
                 course = self.create(original.get("title", "Imported course"), original.get("description", ""))
                 course.update(modules=remap(modules), pyqs=remap(pyqs),
                               reviews=reviews, demo=bool(original.get("demo", False)))
+                for field in ("document_coverage", "generation_version", "corrections", "warnings"):
+                    if field in original:
+                        course[field] = remap(original[field])
                 for module, old in zip(course["modules"], original["modules"]):
                     for field in ("read", "bookmarked", "notes", "attempts"):
                         if field in old:
@@ -322,6 +381,8 @@ def validate_package(pkg, allowed):
             answer = q.get("correct_index")
             if not isinstance(opts, list) or not 2 <= len(opts) <= 6 or type(answer) is not int or not 0 <= answer < len(opts):
                 raise ValueError("A practice question has an invalid answer key.")
+            if any(not isinstance(opt, str) or not opt.strip() for opt in opts) or len({" ".join(opt.lower().split()) for opt in opts}) != len(opts):
+                raise ValueError("Practice options must be distinct and nonempty.")
     if not any(q["type"] == "objective" for q in questions):
         raise ValueError("The question bank needs objective questions.")
     if not isinstance(pkg.get("flashcards"), list) or not pkg["flashcards"]:
@@ -332,6 +393,25 @@ def validate_package(pkg, allowed):
     return pkg
 
 
+def bank_version(module):
+    bank = module.get("package", {}).get("questions", [])
+    return hashlib.sha256(json.dumps(bank, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def assessment_evidence(module):
+    questions = {q["id"]:q for q in module.get("package", {}).get("questions", []) if q["type"] == "objective"}
+    first = {}
+    for attempt in module.get("attempts", []):
+        if attempt.get("bank_version") != bank_version(module):
+            continue
+        for result in attempt.get("results", []):
+            if result.get("id") in questions:
+                first.setdefault(result["id"], result.get("correct") is True)
+    topics = {questions[qid].get("topic") for qid in first}
+    return dict(unique=len(first), bank_size=len(questions), first_correct=sum(first.values()),
+                topics=len(topics & set(module.get("topics", []))), total_topics=len(module.get("topics", [])))
+
+
 def module_state(module):
     attempts = module.get("attempts", [])
     if attempts:
@@ -339,17 +419,23 @@ def module_state(module):
         score = sum(a["correct"] for a in recent) / max(1, sum(a["total"] for a in recent))
         if score < .5:
             return "weak"
-        if score >= .8 and len(attempts) >= 2 and sum(a["total"] for a in recent) >= 5:
+        evidence = assessment_evidence(module)
+        if score >= .8 and evidence["unique"] >= 12 and evidence["first_correct"] / evidence["unique"] >= .8 and evidence["topics"] == evidence["total_topics"]:
             return "mastered"
         return "learning"
     return "learning" if module.get("read") else "unseen"
 
 
-def grade(module, answers):
+def grade(module, answers, question_ids=None):
     questions = [q for q in module.get("package", {}).get("questions", []) if q["type"] == "objective"]
     if not questions:
         raise ValueError("This module has no objective practice yet.")
-    if not isinstance(answers, dict) or any(q["id"] not in answers for q in questions):
+    if question_ids is not None:
+        valid = {q["id"] for q in questions}
+        if not isinstance(question_ids, list) or not question_ids or len(question_ids) != len(set(question_ids)) or any(qid not in valid for qid in question_ids):
+            raise ValueError("Choose a valid set of saved questions.")
+        questions = [q for q in questions if q["id"] in question_ids]
+    if not isinstance(answers, dict) or set(answers) != {q["id"] for q in questions}:
         raise ValueError("Answer each question before checking your results.")
     results = []
     for q in questions:
@@ -358,9 +444,11 @@ def grade(module, answers):
             raise ValueError("Choose a valid option for every question.")
         results.append(dict(id=q["id"], selected=answer, correct_index=q["correct_index"],
                             correct=answer == q["correct_index"], solution=q["solution"]))
-    attempt = dict(date=now(), correct=sum(r["correct"] for r in results), total=len(results), results=results)
+    previous = assessment_evidence(module)["unique"]
+    attempt = dict(date=now(), correct=sum(r["correct"] for r in results), total=len(results), results=results, bank_version=bank_version(module))
     module.setdefault("attempts", []).append(attempt)
     module["attempts"] = module["attempts"][-30:]
+    attempt["new_questions"] = assessment_evidence(module)["unique"] - previous
     return attempt
 
 

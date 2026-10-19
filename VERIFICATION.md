@@ -3,7 +3,7 @@
 ## Automated checks
 Run: `python -m unittest discover -s tests -v`.
 
-Latest result: **33 tests passed**, including eight configuration regression checks added after the initial build.
+Latest result: **41 tests passed**. The teaching-depth checkpoint adds order-independent document sampling, Unicode recovery with a pre-migration database backup, required-topic plan validation, independent lesson resumption, preserved packages on course extension, and unique-question assessment evidence.
 
 The suite covers local PDF extraction, upload deduplication and rollback, prerequisite validation, source-page validation, practice answer keys and scoring, reading versus mastery, flashcard schedules, durable provider caching after reopening storage, quota handling, interrupted-job recovery, generation resumption without repeating completed modules, backup export/import and state validation, secret exclusion, and cross-origin write rejection.
 

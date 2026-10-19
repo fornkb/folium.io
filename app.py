@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from core import Store, clean, grade, module_state, review_card, validate_outline
+from core import Store, clean, grade, module_state, review_card, validate_outline, safe_text, assessment_evidence
 from generation import Gemini, Jobs, Settings
 from configuration import configured_values, env_path
 from pdfview import render_page
@@ -38,7 +38,7 @@ def create_server(data_dir, port=8765, seed=True, env_file=None):
 
         def send(self, status, body, mime="application/json; charset=utf-8", filename=None):
             if not isinstance(body, bytes):
-                body = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                body = json.dumps(body).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(len(body)))
@@ -89,6 +89,7 @@ def create_server(data_dir, port=8765, seed=True, env_file=None):
             course = store.public(cid)
             for m in course["modules"]:
                 m["state"] = module_state(m)
+                m["evidence"] = assessment_evidence(m)
             return course
 
         def do_GET(self):
@@ -128,7 +129,9 @@ def create_server(data_dir, port=8765, seed=True, env_file=None):
                             pages = json.loads(store.db.execute("SELECT pages FROM documents WHERE id=?",(match[1],)).fetchone()[0])
                         if not 1 <= page <= len(pages):
                             raise ValueError("Choose a valid source page.")
-                        return self.send(200,dict(name=name,page=page,text=pages[page-1]))
+                        text = safe_text(pages[page-1])
+                        return self.send(200,dict(name=name,page=page,text=text,
+                            warning="Some PDF symbols could not be extracted. Check the original page for exact notation." if "\ufffd" in text else ""))
                     if path.startswith("/api/"):
                         return self.send(404, dict(error="This page could not be found."))
                     relative = path.lstrip("/") or "index.html"
@@ -177,10 +180,15 @@ def create_server(data_dir, port=8765, seed=True, env_file=None):
                     course["warnings"] = warnings
                     store.save(course)
                     return self.send(201, self.public(course["id"]))
-                match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/(outline|prepare|modules/([^/]+)/(progress|quiz|review))", path)
+                match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/(outline|extend|prepare|modules/([^/]+)/(progress|quiz|review))", path)
                 if match:
                     cid, action, mid, subaction = match[1], match[2], match[3], match[4]
                     course = store.course(cid)
+                    if action == "extend":
+                        if cid in jobs.active:
+                            raise ValueError("Wait for preparation to pause or finish before adding a module.")
+                        store.extend(cid, body.get("modules", []))
+                        return self.send(200, self.public(cid))
                     if action == "prepare":
                         jobs.start(cid, body.get("action", "generate"))
                         return self.send(202, self.public(cid))
@@ -202,7 +210,7 @@ def create_server(data_dir, port=8765, seed=True, env_file=None):
                             if "notes" in body:
                                 module["notes"] = clean(body["notes"], 30000)
                         elif subaction == "quiz":
-                            result.update(grade(module, body.get("answers", {})))
+                            result.update(grade(module, body.get("answers", {}), body.get("question_ids")))
                         elif subaction == "review":
                             result.update(review_card(c, mid, int(body.get("index", -1)), body.get("rating")))
                     store.update(cid, mutate)

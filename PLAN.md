@@ -49,3 +49,10 @@ Text-based PDFs first; image-only scans require OCR before upload. No live tutor
 - Added both Gemini key variable names, source labels in Settings, blank-setting fallback, Windows persisted-variable detection, and an explicit `--env-file` option.
 - Environment keys are not copied into settings when saving other preferences, and never appear in public configuration responses.
 - All 33 automated checks pass, including eight configuration regressions. The user's real key was detected locally without making an inference call.
+
+## Follow-up: teaching depth and real-course audit
+- [x] Fair document sampling, document-to-module coverage, safe Unicode extraction, and detailed coverage-first prompts.
+- [x] Persist a module teaching plan and each focused lesson independently; resume without repeating saved lessons. Preserve existing packages.
+- [ ] Safe Markdown and offline mathematical typesetting, compact citations, lesson navigation, and responsive graph/reader layouts.
+- [ ] Shuffled assessment presentation, topic drills, unique-question evidence, and transparent corrections of identified content errors.
+- [ ] Back up and repair the live course; add only the missing Quantum Error Correction module. Test, synchronize the running copy, and document results.

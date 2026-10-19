@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from app import create_server
 from core import Store, grade, module_state, review_card, validate_outline, validate_package
-from generation import Gemini, Jobs, ProviderError, Settings, source_pages, OUTLINE
+from generation import Gemini, Jobs, ProviderError, Settings, source_pages, OUTLINE, TEACHING_PLAN
 from sample import SPECS, sample_package, seed_sample
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,7 +81,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(4, grade(module, answers)["correct"])
         self.assertEqual("learning", module_state(module))
         grade(module, answers)
-        self.assertEqual("mastered", module_state(module))
+        self.assertEqual("learning", module_state(module))
         with self.assertRaises(ValueError):
             grade(module, {})
 
@@ -181,13 +181,17 @@ class CoreTests(unittest.TestCase):
             calls = 0
             def generate(_, prompt, schema, validator):
                 _.calls += 1
-                return validator(copy.deepcopy(module["package"]))
+                if schema == TEACHING_PLAN:
+                    return validator(dict(overview="Overview",objectives=["Understand"],lessons=[dict(id="l1",title="Lesson",topics=module["topics"],concepts=["Core idea"],gaps=[])]))
+                package=copy.deepcopy(module["package"])
+                for i,q in enumerate(package["questions"]):q["topic"]=module["topics"][i % len(module["topics"])]
+                return validator(package)
         fake = Fake()
         jobs = Jobs(self.store, fake)
         jobs._packages(self.course["id"])
-        self.assertEqual(1, fake.calls)
+        self.assertEqual(2, fake.calls)
         jobs._packages(self.course["id"])
-        self.assertEqual(1, fake.calls)
+        self.assertEqual(2, fake.calls)
         self.assertEqual("ready", self.store.course(self.course["id"])["status"])
 
     def test_restart_marks_inflight_work_paused(self):
@@ -279,8 +283,12 @@ class HttpTests(unittest.TestCase):
         doc=course["documents"][0]
         def generate(prompt,schema,validator):
             if schema==OUTLINE:
-                return validator(dict(description="Test outline",modules=[dict(id="m1",title="Complexity",description="Growth",topics=["Big O"],prerequisites=[])]))
-            return validator(sample_package(SPECS[0],doc["id"],1))
+                return validator(dict(description="Test outline",modules=[dict(id="m1",title="Complexity",description="Growth",topics=["Big O"],prerequisites=[])],document_coverage=[dict(doc_id=doc["id"],module_ids=["m1"],notes="")]))
+            if schema==TEACHING_PLAN:
+                return validator(dict(overview="Overview",objectives=["Understand Big O"],lessons=[dict(id="l1",title="Complexity",topics=["Big O"],concepts=["Growth"],gaps=[])]))
+            package=sample_package(SPECS[0],doc["id"],1)
+            for q in package["questions"]:q["topic"]="Big O"
+            return validator(package)
         with patch.object(self.server.jobs.provider,"generate",side_effect=generate) as provider:
             self.request(f"/api/courses/{cid}/prepare",dict(action="outline"))
             course=self.wait_job(cid)
@@ -289,9 +297,9 @@ class HttpTests(unittest.TestCase):
             self.request(f"/api/courses/{cid}/prepare",dict(action="generate"))
             course=self.wait_job(cid)
             self.assertEqual("ready",course["status"])
-            self.assertEqual(2,provider.call_count)
+            self.assertEqual(3,provider.call_count)
             self.request(f"/api/courses/{cid}/prepare",dict(action="generate"))
-            self.assertEqual(2,provider.call_count)
+            self.assertEqual(3,provider.call_count)
         text=self.request(f"/api/documents/{doc['id']}/pages/1")
         self.assertIn("Complexity",text["text"])
         with urllib.request.urlopen(self.url+f"/api/documents/{doc['id']}/pages/1.png") as response:
