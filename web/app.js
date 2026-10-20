@@ -231,7 +231,10 @@ document.addEventListener('click',async event=>{
       const value=await api(`/courses/${item.cid}/modules/${enc(item.mid)}/review`,{index:item.index,rating:el.dataset.rating});updateCourse(value.course);session.pos++;session.flipped=false;render();
     }
     if(action==='theme'){state.theme=el.dataset.theme;localStorage.setItem('folium-theme',state.theme);render();}
-    if(action==='clear-key'){state.settings=await api('/settings',{clear_key:true});render();toast('Saved key removed.');}
+    if(action==='clear-key'){
+      const slot=Number(el.dataset.slot||1),field=slot===1?'clear_key':`clear_key_${slot}`;
+      state.settings=await api('/settings',{[field]:true});render();toast(`Saved key ${slot} removed.`);
+    }
   }catch(error){toast(error.message,true);}finally{if(busy&&el.isConnected)el.disabled=false;}
 });
 
@@ -244,7 +247,7 @@ document.addEventListener('submit',async event=>{
       const saved=await api(`/courses/${c.id}/extend`,{modules:[{id:'m'+Date.now(),title:data.get('title'),topics:String(data.get('topics')).split('\n').map(t=>t.trim()).filter(Boolean),prerequisites:data.getAll('parents')}]});
       updateCourse(saved);state.allowPrepared=null;closeModal();goto(link(c.id)+'/setup');toast('Module added. Ready to prepare only the missing content.');
     }else if(form.id==='settings-form'){
-      const data=new FormData(form);state.settings=await api('/settings',{api_key:data.get('api_key'),model:data.get('model'),interval:Number(data.get('interval'))});render();toast('Your connection settings are saved.');
+      const data=new FormData(form);state.settings=await api('/settings',{api_key:data.get('api_key'),api_key_2:data.get('api_key_2'),api_key_3:data.get('api_key_3'),model:data.get('model'),interval:Number(data.get('interval'))});render();toast('Your connection settings are saved.');
     }else{
       if(!state.files.length)throw new Error('Add at least one readable course PDF.');
       if(state.files.every(f=>f.role==='pyq'))throw new Error('Add a syllabus or learning material alongside your past papers.');

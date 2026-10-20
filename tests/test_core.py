@@ -107,10 +107,13 @@ class CoreTests(unittest.TestCase):
         module=self.course["modules"][0]
         grade(module,{q["id"]:q["correct_index"] for q in module["package"]["questions"] if q["type"]=="objective"})
         self.store.save(self.course)
-        Settings(self.store.root).save(dict(api_key="secret-key"))
+        Settings(self.store.root).save(dict(api_key="secret-key", api_key_2="second-secret", api_key_3="third-secret"))
         backup = self.store.export(self.course["id"])
         with zipfile.ZipFile(io.BytesIO(backup)) as z:
-            self.assertNotIn(b"secret-key", z.read("folium.json"))
+            for name in z.namelist():
+                for secret in (b"secret-key", b"second-secret", b"third-secret"):
+                    self.assertNotIn(secret, z.read(name))
+            self.assertNotIn("settings.json", z.namelist())
         restored = self.store.import_course(backup)
         self.assertNotEqual(restored["id"], self.course["id"])
         self.assertEqual("My own note", restored["modules"][0]["notes"])
@@ -259,10 +262,15 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(6, len(courses[0]["modules"]))
 
     def test_settings_never_return_key(self):
-        self.request("/api/settings", dict(api_key="do-not-return-this"))
+        result = self.request("/api/settings", dict(api_key="do-not-return-this", api_key_2="second-private-key", api_key_3="third-private-key"))
         settings = self.request("/api/settings")
         self.assertTrue(settings["has_key"])
-        self.assertNotIn("api_key", settings)
+        self.assertEqual(3, settings["key_count"])
+        for public in (result, settings):
+            for field in ("api_key", "api_key_2", "api_key_3", "api_keys"):
+                self.assertNotIn(field, public)
+            for secret in ("do-not-return-this", "second-private-key", "third-private-key"):
+                self.assertNotIn(secret, json.dumps(public))
 
     def test_cross_origin_writes_rejected(self):
         with self.assertRaises(urllib.error.HTTPError) as error:

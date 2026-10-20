@@ -9,7 +9,10 @@ from pathlib import Path
 
 from core import clean
 
-CONFIG_KEYS = ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_MODEL", "FOLIUM_PORT")
+API_KEY_FIELDS = ("api_key", "api_key_2", "api_key_3")
+KEY_ENV_NAMES = tuple(("GEMINI_API_KEY" + suffix, "GOOGLE_API_KEY" + suffix)
+                      for suffix in ("", "_2", "_3"))
+CONFIG_KEYS = tuple(name for names in KEY_ENV_NAMES for name in names) + ("GEMINI_MODEL", "FOLIUM_PORT")
 
 
 def environment_values():
@@ -91,20 +94,29 @@ class Settings:
         with self.lock:
             value = self._saved()
         external, sources = configured_values(self.env_file)
-        saved_key = str(value.get("api_key") or "").strip()
-        # A blank saved field must not hide a valid environment key.
-        key_name = next((name for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY") if external.get(name)), None)
-        value["api_key"] = saved_key or (external[key_name] if key_name else "")
-        value["key_source"] = "settings" if saved_key else sources.get(key_name)
-        value["has_saved_key"] = bool(saved_key)
+        slots = []
+        for slot, (field, env_names) in enumerate(zip(API_KEY_FIELDS, KEY_ENV_NAMES), 1):
+            saved_key = str(value.get(field) or "").strip()
+            # Resolve each slot independently; a blank entry keeps its environment fallback.
+            key_name = next((name for name in env_names if external.get(name)), None)
+            value[field] = saved_key or (external[key_name] if key_name else "")
+            slots.append(dict(slot=slot, has_key=bool(value[field]),
+                              key_source="settings" if saved_key else sources.get(key_name),
+                              has_saved_key=bool(saved_key)))
+        # Repeated credentials should not receive extra turns in the rotation.
+        value["api_keys"] = list(dict.fromkeys(value[field] for field in API_KEY_FIELDS if value[field]))
+        value["key_slots"] = slots
+        value["key_source"] = slots[0]["key_source"]
+        value["has_saved_key"] = slots[0]["has_saved_key"]
         value["model"] = value.get("model") or external.get("GEMINI_MODEL") or "gemini-3.8-flash"
         value.setdefault("interval", 6)
         return value
 
     def public(self):
         value = self.get()
-        return dict(has_key=bool(value["api_key"]), model=value["model"], interval=value["interval"],
+        return dict(has_key=bool(value["api_keys"]), model=value["model"], interval=value["interval"],
                     key_source=value["key_source"], has_saved_key=value["has_saved_key"],
+                    key_count=len(value["api_keys"]), key_slots=value["key_slots"],
                     env_file_found=self.env_file.is_file())
 
     def save(self, body):
@@ -116,10 +128,12 @@ class Settings:
         with self.lock:
             # Save only explicit settings. Never copy an external key into this file.
             saved = self._saved()
-            if body.get("api_key"):
-                saved["api_key"] = clean(body["api_key"], 300)
-            if body.get("clear_key"):
-                saved.pop("api_key", None)
+            for field in API_KEY_FIELDS:
+                key = clean(body.get(field), 300)
+                if key:
+                    saved[field] = key
+                if body.get(field.replace("api_key", "clear_key")):
+                    saved.pop(field, None)
             saved["model"], saved["interval"] = model, interval
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(saved), "utf-8")

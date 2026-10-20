@@ -33,9 +33,11 @@ Create a `.env` file beside `app.py`, using `.env.example` as a template. Add yo
 GEMINI_API_KEY=your_key_here
 ```
 
-You can also configure a key in the app's Settings or through `GEMINI_API_KEY` / `GOOGLE_API_KEY` environment variables. Select a Gemini model available to your project in Settings. Folium has no automatic paid-model fallback; model access and free-tier quotas depend on your Google project.
+You can configure up to three keys in the app's Settings. For `.env` or environment configuration, use `GEMINI_API_KEY`, `GEMINI_API_KEY_2`, and `GEMINI_API_KEY_3`; corresponding `GOOGLE_API_KEY` names are also supported. The extra slots are optional. Select a Gemini model available to your project in Settings. Folium has no automatic paid-model fallback; model access and free-tier quotas depend on your Google project.
 
-A key saved in Settings takes precedence over environment configuration. Otherwise, process environment variables take precedence over `.env`; `GEMINI_API_KEY` takes precedence over `GOOGLE_API_KEY`. The app rereads `.env` when configuration is needed. Refresh the browser after editing it to update the connection indicator.
+A key saved in Settings takes precedence over environment configuration for that slot. Otherwise, process environment variables take precedence over `.env`; the `GEMINI_API_KEY` name takes precedence over the corresponding `GOOGLE_API_KEY` name. Leave a field blank to preserve its current key. Removing a saved key restores that slot's environment fallback, if present. The app rereads `.env` when configuration is needed. Refresh the browser after editing it to update the connection indicators.
+
+Outgoing Gemini requests rotate through distinct configured keys in slot order, then repeat. Empty slots are skipped and duplicate keys are used once. Cached results make no request and do not advance the rotation. Rotation is shared across course jobs in the running server and starts at the first available slot after a restart or a key change. The request interval still applies globally. A failed request consumes its turn and pauses preparation as before; an explicit resume tries the next key. Keys belonging to the same Google project share its quotas, so rotation does not increase that project's allowance.
 
 Keys stay on the server and are excluded from course exports. Configuration and course files are stored locally, so other users with access to those files can read them. Never commit a real key.
 

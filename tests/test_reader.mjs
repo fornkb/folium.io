@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {renderText,inlineText} from '../web/reader.js';
-import {practice,studyGuide,flashcard} from '../web/ui.js';
+import {practice,studyGuide,flashcard,settingsView} from '../web/ui.js';
 const require=createRequire(import.meta.url);
 globalThis.katex=require('../web/vendor/katex/katex.min.js');
 
@@ -29,4 +29,11 @@ assert.ok(guide.indexOf('Second diagram')>guide.indexOf('id="section-5"'));
 assert.ok(guide.indexOf('First diagram')<guide.indexOf('id="section-3"'));
 const card=flashcard({cards:[{module:'Math',card:{front:'State \\(x\\)',back:'\\[x^2\\]'}}],pos:0,flipped:true});
 assert.match(card,/katex-display/);
-console.log('Reader safety, Markdown, offline math, and shuffled canonical options passed.');
+const settings=settingsView({model:'gemini-test',interval:6,has_key:true,key_count:2,key_slots:[{slot:1,has_key:true,has_saved_key:true,key_source:'settings'},{slot:2,has_key:false},{slot:3,has_key:true,has_saved_key:true,key_source:'settings'}],api_key:'never-render-one',api_key_3:'never-render-three'},'light');
+assert.equal((settings.match(/type="password"/g)||[]).length,3);
+assert.match(settings,/name="api_key_2"/);
+assert.match(settings,/name="api_key_3"/);
+assert.match(settings,/data-slot="3">Remove saved key 3/);
+assert.doesNotMatch(settings,/data-slot="2">Remove saved key/);
+assert.doesNotMatch(settings,/never-render/);
+console.log('Reader safety, Markdown, offline math, shuffled canonical options, and private key controls passed.');

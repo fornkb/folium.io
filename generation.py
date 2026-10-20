@@ -46,6 +46,8 @@ class Gemini:
         self.store, self.settings = store, settings
         self.lock = threading.Lock()
         self.last_call = 0
+        self.key_pool = ()
+        self.next_key = 0
 
     def generate(self, prompt, schema, validator=lambda x: x):
         settings = self.settings.get()
@@ -53,17 +55,23 @@ class Gemini:
         cached = self.store.cached(cache_key)
         if cached is not None:
             return validator(cached)
-        if not settings["api_key"]:
-            raise ProviderError("Add your Gemini API key in Settings, then resume preparation.")
         payload = dict(contents=[dict(role="user", parts=[dict(text=prompt)])],
                        systemInstruction=dict(parts=[dict(text=SYSTEM)]),
                        generationConfig=dict(temperature=.3, maxOutputTokens=24000,
                                              responseMimeType="application/json", responseSchema=schema))
-        req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models/" + settings["model"] + ":generateContent",
-                                     data=json.dumps(payload).encode(), method="POST",
-                                     headers={"Content-Type":"application/json", "x-goog-api-key": settings["api_key"]})
         with self.lock:
             time.sleep(max(0, settings["interval"] - (time.monotonic() - self.last_call)))
+            # A waiting job must not reuse a key removed while it was queued.
+            keys = tuple(self.settings.get()["api_keys"])
+            if not keys:
+                raise ProviderError("Add a Gemini API key in Settings, then resume preparation.")
+            if keys != self.key_pool:
+                self.key_pool, self.next_key = keys, 0
+            req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models/" + settings["model"] + ":generateContent",
+                                         data=json.dumps(payload).encode(), method="POST",
+                                         headers={"Content-Type":"application/json", "x-goog-api-key": keys[self.next_key]})
+            # Only outgoing attempts consume a turn, including failed attempts.
+            self.next_key = (self.next_key + 1) % len(keys)
             try:
                 self.last_call = time.monotonic()
                 with urllib.request.urlopen(req, timeout=240) as response:
@@ -74,7 +82,7 @@ class Gemini:
                 if exc.code == 429:
                     raise ProviderError("Gemini's free quota or rate limit was reached. Completed work is saved. Wait for your quota to reset, then select Resume.") from None
                 if exc.code in (401, 403):
-                    raise ProviderError("Gemini rejected this key or model access. Check your key and the free-tier model in Settings.") from None
+                    raise ProviderError("Gemini rejected a configured key or model access. Check your keys and the free-tier model in Settings.") from None
                 if exc.code == 404:
                     raise ProviderError("This Gemini model is unavailable. Choose a model available to your project in Settings.") from None
                 raise ProviderError(f"Gemini returned HTTP {exc.code}. Completed work is saved; resume to retry.") from None
