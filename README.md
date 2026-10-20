@@ -78,6 +78,12 @@ Text extraction and PDF previews run locally. Source excerpts selected for prepa
 
 ## Development
 
+### Planned direction: scope-driven teaching and scanned PDFs
+
+The PDFs and reviewed syllabus should define what the course teaches, its depth, and its notation. Gemini may explain those topics using its general knowledge, derivations, and generated examples, without reproducing the notes or requiring an excerpt for every explanation. Source-specific claims and original past-paper wording still need faithful extraction. Links that locate a topic in the materials must be distinguished from citations supporting a particular claim.
+
+The proposed scan workflow keeps local text extraction for readable pages and uses an explicitly requested Gemini visual pass on pages needing it to build a saved, page-aware scope map. Unreadable pages and uncertain notation remain visible for review. Optional local OCR can provide searchable text. This is a planned change: the current app still requires text-readable PDFs and uses excerpt-grounded lesson prompts. Scan processing and scope-driven generation have not been implemented or benchmarked.
+
 The backend uses Python's HTTP server, SQLite, pypdf, PDFium, and Pillow. The frontend is buildless HTML, CSS, and JavaScript with locally bundled KaTeX.
 
 | File | Purpose |
