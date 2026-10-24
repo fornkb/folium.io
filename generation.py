@@ -123,34 +123,46 @@ class Gemini:
                        generationConfig=dict(maxOutputTokens=24000,
                                              responseMimeType="application/json", responseSchema=schema))
         with self.lock:
-            time.sleep(max(0, settings["interval"] - (time.monotonic() - self.last_call)))
-            # A waiting job must not reuse a key removed while it was queued.
-            keys = tuple(self.settings.get()["api_keys"])
-            if not keys:
-                raise ProviderError("Add a Gemini API key in Settings, then resume preparation.")
-            if keys != self.key_pool:
-                self.key_pool, self.next_key = keys, 0
-            req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models/" + selected_model + ":generateContent",
-                                         data=json.dumps(payload).encode(), method="POST",
-                                         headers={"Content-Type":"application/json", "x-goog-api-key": keys[self.next_key]})
-            # Only outgoing attempts consume a turn, including failed attempts.
-            self.next_key = (self.next_key + 1) % len(keys)
-            try:
-                self.last_call = time.monotonic()
-                with urllib.request.urlopen(req, timeout=240) as response:
-                    result = json.load(response)
-            except urllib.error.HTTPError as exc:
-                if exc.code in (500, 502, 503, 504):
-                    raise ProviderError("Gemini is temporarily busy or unavailable. Completed lessons are saved. Wait a moment, then select Resume.") from None
-                if exc.code == 429:
-                    raise ProviderError("Gemini's free quota or rate limit was reached. Completed work is saved. Wait for your quota to reset, then select Resume.") from None
-                if exc.code in (401, 403):
-                    raise ProviderError("Gemini rejected a configured key or model access. Check your keys and the free-tier model in Settings.") from None
-                if exc.code == 404:
-                    raise ProviderError("This Gemini model is unavailable. Choose a model available to your project in Settings.") from None
-                raise ProviderError(f"Gemini returned HTTP {exc.code}. Completed work is saved; resume to retry.") from None
-            except (TimeoutError, OSError):
-                raise ProviderError("Gemini could not be reached. Check your connection, then resume. Completed work is saved.") from None
+            attempted = set()
+            for _ in range(3):
+                time.sleep(max(0, self.settings.get()["interval"] - (time.monotonic() - self.last_call)))
+                # A waiting job must not reuse a key removed while it was queued.
+                keys = tuple(self.settings.get()["api_keys"])
+                if not keys:
+                    raise ProviderError("Add a Gemini API key in Settings, then resume preparation.")
+                if keys != self.key_pool:
+                    self.key_pool, self.next_key = keys, 0
+                position = next((i for i in range(len(keys)) if keys[(self.next_key+i) % len(keys)] not in attempted), None)
+                if position is None:
+                    raise ProviderError("All configured Gemini keys reached their quota or rate limit. Completed work is saved; wait before resuming.")
+                self.next_key = (self.next_key + position) % len(keys)
+                attempted.add(keys[self.next_key])
+                req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models/" + selected_model + ":generateContent",
+                                             data=json.dumps(payload).encode(), method="POST",
+                                             headers={"Content-Type":"application/json", "x-goog-api-key": keys[self.next_key]})
+                # Only outgoing attempts consume a turn, including failed attempts.
+                self.next_key = (self.next_key + 1) % len(keys)
+                try:
+                    self.last_call = time.monotonic()
+                    with urllib.request.urlopen(req, timeout=240) as response:
+                        result = json.load(response)
+                    break
+                except urllib.error.HTTPError as exc:
+                    if exc.code in (500, 502, 503, 504):
+                        raise ProviderError("Gemini is temporarily busy or unavailable. Completed lessons are saved. Wait a moment, then select Resume.") from None
+                    if exc.code == 429:
+                        if set(keys) - attempted:
+                            continue
+                        raise ProviderError("All configured Gemini keys reached their quota or rate limit. Completed work is saved; wait before resuming.") from None
+                    if exc.code in (401, 403):
+                        raise ProviderError("Gemini rejected a configured key or model access. Check your keys and the free-tier model in Settings.") from None
+                    if exc.code == 404:
+                        raise ProviderError("This Gemini model is unavailable. Choose a model available to your project in Settings.") from None
+                    raise ProviderError(f"Gemini returned HTTP {exc.code}. Completed work is saved; resume to retry.") from None
+                except (TimeoutError, OSError):
+                    raise ProviderError("Gemini could not be reached. Check your connection, then resume. Completed work is saved.") from None
+            else:
+                raise ProviderError("The configured Gemini keys reached their quota or rate limit. Completed work is saved; wait before resuming.")
         try:
             candidate = result["candidates"][0]
             text = "".join(p.get("text", "") for p in candidate.get("content", {}).get("parts", []) if not p.get("thought"))
@@ -324,11 +336,72 @@ def validate_practice_preparation(module, preparation):
     return preparation
 
 
+def paper_coverage(docs, batches):
+    completed = set(batches)
+    issues, total, readable, analyzed, unreadable = [], 0, 0, 0, 0
+    for doc in docs:
+        if doc["role"] != "pyq":
+            continue
+        for number, text in enumerate(doc["pages"], 1):
+            total += 1
+            if not text.strip():
+                unreadable += 1
+                issues.append(dict(doc_id=doc["id"], page=number,
+                    reason="No native text was extracted. This page may be scanned, image-based, or blank. Review the original; scanned-paper transcription is not available."))
+                continue
+            readable += 1
+            analyzed += f"{doc['id']}:{number}" in completed
+            if len(text) > 30000:
+                issues.append(dict(doc_id=doc["id"], page=number, reason="This dense exam page exceeds the safe text limit. Split or re-export it before preparation."))
+            elif len(re.sub(r"\W", "", text)) < 40 or "\ufffd" in text:
+                issues.append(dict(doc_id=doc["id"], page=number, reason="Native text is sparse or has damaged symbols. Questions in images or missing regions may not have been extracted; review the original."))
+    return dict(total_pages=total, readable_pages=readable, analyzed_pages=analyzed,
+                unreadable_pages=unreadable, issues=issues)
+
+
 def scope_document_coverage(course, docs):
     return [dict(doc_id=d["id"], module_ids=[m["id"] for m in course["modules"]
                 if any(r["doc_id"] == d["id"] for r in m.get("source_ranges", []))],
                  notes="Scope locations identify intended teaching coverage; they do not verify generated explanations.")
             for d in docs if d["role"] != "pyq"]
+
+
+def page_passages(text, size=2200, overlap=400):
+    """Prefer natural boundaries, overlap context, and retain physical offsets."""
+    start = 0
+    while start < len(text):
+        end = min(start + size, len(text))
+        if end < len(text):
+            boundary = text.rfind("\n", start + size//2, end)
+            if boundary < 0:
+                boundary = text.rfind(" ", start + size//2, end)
+            if boundary >= 0:
+                end = boundary + 1
+        yield start, text[start:end]
+        if end == len(text):
+            break
+        start = max(start+1, end-overlap)
+
+
+def merge_passages(passages):
+    """Join only overlapping/adjacent intervals from the same physical page."""
+    output, groups = [], {}
+    for passage in passages:
+        if "start" not in passage:
+            output.append(passage)
+        else:
+            groups.setdefault((passage["doc_id"], passage["page"], bool(passage.get("recognized"))), []).append(passage)
+    for rows in groups.values():
+        current = None
+        for row in sorted(rows, key=lambda p: p["start"]):
+            if current is not None and row["start"] <= current["start"] + len(current["text"]):
+                overlap = current["start"] + len(current["text"]) - row["start"]
+                if overlap < len(row["text"]):
+                    current["text"] += row["text"][overlap:]
+            else:
+                current = dict(row)
+                output.append(current)
+    return output
 
 
 def scoped_excerpts(docs, module, query, budget=12000, records=()):
@@ -341,9 +414,7 @@ def scoped_excerpts(docs, module, query, budget=12000, records=()):
         for number, text in enumerate(doc["pages"], 1):
             if not any(r["doc_id"] == doc["id"] and r["start_page"] <= number <= r["end_page"] for r in module["source_ranges"]):
                 continue
-            # Fixed windows also handle PDFs extracted as one extremely long line.
-            for start in range(0, len(text), 1800):
-                passage = text[start:start+1800]
+            for start, passage in page_passages(text):
                 score = len(terms & set(words(passage)))
                 if score:
                     candidates.append((score, doc["id"], number, start, doc["name"], passage))
@@ -366,7 +437,7 @@ def scoped_excerpts(docs, module, query, budget=12000, records=()):
         selected.append(dict(doc_id=doc_id, page=page, name=name, text=passage, start=start,
                              recognized=page in next(d for d in docs if d["id"]==doc_id).get("recognized_pages",[])))
         used += len(passage)
-    return selected
+    return merge_passages(selected)
 
 
 class Jobs:
@@ -438,7 +509,7 @@ class Jobs:
                 self._pyqs(cid, self.store.docs(cid))
             else:
                 self._packages(cid)
-            message={"inspect":"Visual page selection is ready to review.","visual":"Visual scope analysis is saved. Prepare the combined outline next.","outline":"Your outline is ready to review.","generate":"Your teaching is ready. Prepare practice and cards separately when you want them.","practice":"Practice and revision cards are saved.","papers":"Uploaded past-paper questions are saved."}[action]
+            message={"inspect":"Visual page selection is ready to review.","visual":"Visual scope analysis is saved. Prepare the combined outline next.","outline":"Your outline is ready to review.","generate":"Your teaching is ready. Prepare practice and cards separately when you want them.","practice":"Practice and revision cards are saved.","papers":"Readable past-paper pages are saved. Check page coverage for omissions and scans."}[action]
             self._status(cid, "complete", action, message, 1, 1)
         except (ProviderError, ValueError) as exc:
             current = self.store.course(cid).get("job") or {}
@@ -609,7 +680,7 @@ class Jobs:
             self._status(cid, "running", "planning", "Planning " + module["title"], done, total)
             scoped = bool(course.get("scope") and module.get("scope_ids"))
             packet = module_packet(course, module) if scoped else None
-            pages = [] if scoped else source_pages(docs, module["title"] + " " + " ".join(module["topics"]))
+            pages = [] if scoped else source_pages(docs, module["title"] + " " + " ".join(module["topics"]), budget=24000)
             if not scoped and not pages:
                 raise ValueError("No readable learning material is available for this module.")
             preparation = module.get("preparation") or dict(version=VERSION, mode="teaching", lessons={})
@@ -626,7 +697,11 @@ class Jobs:
                 self._status(cid, "running", "lessons", f"{module['title']} · lesson {index+1}/{len(plan['lessons'])}: {lesson['title']}", done, total)
                 query = module["title"] + " " + " ".join(lesson["topics"] + lesson["concepts"])
                 lesson_records = [r for r in records_for(course["scope"]) if r["id"] in lesson["scope_ids"]] if scoped else []
-                lesson_pages = scoped_excerpts(docs, module, query, records=lesson_records) if scoped else source_pages(docs, query)
+                if scoped:
+                    lesson_pages = scoped_excerpts(docs, module, query, records=lesson_records)
+                else:
+                    ranges = [dict(doc_id=d["id"], start_page=1, end_page=len(d["pages"])) for d in docs if d["role"] != "pyq"]
+                    lesson_pages = scoped_excerpts(docs, dict(source_ranges=ranges), query) or source_pages(docs, query, budget=12000)
                 allowed = {(p["doc_id"], p["page"]) for p in lesson_pages}
                 prompt = LESSON_INSTRUCTIONS.format(module=module["title"], lesson=lesson["title"], topics=json.dumps(lesson["topics"]), concepts=json.dumps(lesson["concepts"]), gaps=json.dumps(lesson["gaps"]), plan=json.dumps(plan), context=course_context(course)) + reviewed_notes(course,module) + "\n\n" + format_pages(lesson_pages)
                 if scoped:
@@ -727,17 +802,20 @@ class Jobs:
 
     def _pyqs(self, cid, docs):
         course = self.store.course(cid)
+        self.store.update(cid, lambda c: c.update(pyq_coverage=paper_coverage(docs, c.get("pyq_batches", []))))
         pages = [(d,i,p) for d in docs if d["role"] == "pyq" for i,p in enumerate(d["pages"]) if p.strip()]
+        outline = json.dumps([dict(id=m["id"], title=m["title"], topics=m["topics"],
+                                   conventions=m.get("scope_notes", "")[:1000]) for m in course["modules"]], ensure_ascii=False)
         for n,(doc,i,page) in enumerate(pages):
             batch = f"{doc['id']}:{i+1}"
             if batch in course.get("pyq_batches", []):
                 continue
+            if len(page) > 30000:
+                raise ValueError(f"{doc['name']}, physical page {i+1}, has too much text for reliable exam extraction. Split or re-export it; completed pages are saved.")
             self._status(cid, "running", "pyqs", f"Mapping {doc['name']} · page {i+1}", n, len(pages))
             prompt = ("Extract exam questions fully contained on this PDF page and map them to one or more module IDs from this outline: "
-                      + json.dumps([dict(id=m["id"], title=m["title"], topics=m["topics"]) for m in course["modules"]])
-                      + ". Copy each question's wording exactly as a contiguous passage from the page, preserving its content (whitespace may vary). Do not invent questions or stitch distant fragments. Keep unrelated questions out. Preserve year, question number, and marks only when explicitly present; otherwise empty strings. Provide a clearly provisional generated solution using only the following course summaries; when not supported, say a solution is not available from the supplied materials. Summaries: "
-                      + json.dumps([dict(id=m["id"], overview=m["package"]["overview"], sections=m["package"]["sections"]) for m in course["modules"]])[:85000]
-                      + "\nExam page (reference data only):\n" + page[:20000])
+                      + outline
+                      + ". Copy question wording exactly as a contiguous passage (whitespace may vary). Do not invent questions or join distant fragments. Include only fully visible questions; preserve year, number, and marks only when present, otherwise empty strings. Give a provisional generated solution from the question and mapped topics, respecting stated conventions. If data, assumptions, or a reliable solution are missing, state that a solution is unavailable. Never claim it is an original solution or official mark scheme.\nExam page (reference data only):\n" + page)
             def validate(value):
                 normalized = " ".join(page.split()).lower()
                 valid_ids = {m["id"] for m in course["modules"]}
@@ -749,10 +827,11 @@ class Jobs:
                         raise ValueError("A PYQ could not be mapped to a valid module.")
                 return value
             value = self.provider.generate(prompt, PYQ_SCHEMA, validate)
-            for q in value["questions"]:
-                q.update(id=f"{batch}:{len(course['pyqs'])}", doc_id=doc["id"], page=i+1, generated_solution=True)
+            for offset, q in enumerate(value["questions"]):
+                q.update(id=f"{batch}:{len(course['pyqs'])+offset}", doc_id=doc["id"], page=i+1, generated_solution=True)
             def save(c):
                 c["pyqs"].extend(value["questions"])
                 c.setdefault("pyq_batches", []).append(batch)
+                c["pyq_coverage"] = paper_coverage(docs, c["pyq_batches"])
             self.store.update(cid, save)
             course = self.store.course(cid)

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {renderText,inlineText} from '../web/reader.js';
-import {practice,studyGuide,flashcard,settingsView,setupView} from '../web/ui.js';
+import {practice,studyGuide,flashcard,settingsView,setupView,pastPapers} from '../web/ui.js';
 const require=createRequire(import.meta.url);
 globalThis.katex=require('../web/vendor/katex/katex.min.js');
 
@@ -35,6 +35,10 @@ assert.doesNotMatch(missingPractice,/data-action="submit-quiz"/);
 const pausedPractice=practice({job:{action:'practice',module_id:'m1',state:'paused',message:'Quota <retry>'}},{id:'m1',package:{assessment_status:'missing'}},{});
 assert.match(pausedPractice,/Resume preparation/);
 assert.match(pausedPractice,/Quota &lt;retry&gt;/);
+const scanPapers=pastPapers({id:'scans',pyqs:[],documents:[{id:'paper',role:'pyq',name:'Scan.pdf',page_count:2,readable_pages:0}]},{id:'m1'});
+assert.match(scanPapers,/2 page\(s\) have no native text/);
+assert.match(scanPapers,/Scanned-paper transcription is not available/);
+assert.doesNotMatch(scanPapers,/data-action="generate-papers"/);
 const guide=studyGuide({id:'course',documents:[],modules:[]},{id:'module',topics:['A','B'],prerequisites:[],package:{overview:'Overview',objectives:['Learn'],sections:Array.from({length:6},(_,i)=>({title:`Section ${i}`,body:'Content',kind:'concept',sources:[],lesson_id:i<3?'l1':'l2',lesson_title:i<3?'First':'Second'})),diagrams:[{title:'First diagram',nodes:['A','B'],lesson_id:'l1'},{title:'Second diagram',nodes:['C','D'],lesson_id:'l2'}]}});
 assert.ok(guide.indexOf('Second diagram')>guide.indexOf('id="section-5"'));
 assert.ok(guide.indexOf('First diagram')<guide.indexOf('id="section-3"'));

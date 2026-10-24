@@ -47,6 +47,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY, course_id TEXT NOT NULL,
               name TEXT, role TEXT, pages TEXT, digest TEXT);
             CREATE TABLE IF NOT EXISTS cache(key TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS documents_by_course ON documents(course_id);
         """)
         self.db.commit()
         self._repair_extraction()
@@ -374,6 +375,9 @@ class Store:
                 # Preserve PYQ-stage completion when resuming an imported course.
                 course["pyq_batches"] = [id_map.get(x.split(":")[0], x.split(":")[0]) + ":" + x.split(":", 1)[1]
                                          for x in original.get("pyq_batches", []) if ":" in x]
+                if "pyq_coverage" in original:
+                    from generation import paper_coverage
+                    course["pyq_coverage"] = paper_coverage([d for d, _ in prepared], course["pyq_batches"])
                 for doc, raw in prepared:
                     self._save_doc(course["id"], doc, raw)
                 self.save(course)

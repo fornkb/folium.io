@@ -12,7 +12,7 @@ from core import clean
 API_KEY_FIELDS = ("api_key", "api_key_2", "api_key_3")
 KEY_ENV_NAMES = tuple(("GEMINI_API_KEY" + suffix, "GOOGLE_API_KEY" + suffix)
                       for suffix in ("", "_2", "_3"))
-CONFIG_KEYS = tuple(name for names in KEY_ENV_NAMES for name in names) + ("GEMINI_MODEL", "FOLIUM_PORT")
+CONFIG_KEYS = tuple(name for names in KEY_ENV_NAMES for name in names) + ("GEMINI_MODEL", "GEMINI_VISION_MODEL", "FOLIUM_PORT")
 
 
 def environment_values():
@@ -109,7 +109,7 @@ class Settings:
         value["key_source"] = slots[0]["key_source"]
         value["has_saved_key"] = slots[0]["has_saved_key"]
         value["model"] = value.get("model") or external.get("GEMINI_MODEL") or "gemini-3.8-flash"
-        value["vision_model"] = value.get("vision_model") or value["model"]
+        value["vision_model"] = value.get("vision_model") or external.get("GEMINI_VISION_MODEL") or value["model"]
         value.setdefault("interval", 6)
         return value
 

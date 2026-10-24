@@ -78,7 +78,7 @@ class KeyRotationTests(unittest.TestCase):
         self.assertEqual("replacement-key", self.seen[-1])
 
     def test_error_advances_turn_without_automatic_retry(self):
-        for status in (429, 403, 503):
+        for status in (403, 503):
             with self.subTest(status=status):
                 def fail(request, **kwargs):
                     self.seen.append(request.get_header("X-goog-api-key"))
@@ -89,8 +89,32 @@ class KeyRotationTests(unittest.TestCase):
                 self.assertNotIn("test-", str(error.exception))
                 self.request.side_effect = self.respond
                 self.generate(f"unfinished {status}")
-        self.assertEqual(["test-one", "test-two", "test-three", "test-one", "test-two", "test-three"], self.seen)
-        self.assertEqual(6, self.request.call_count)
+        self.assertEqual(["test-one", "test-two", "test-three", "test-one"], self.seen)
+        self.assertEqual(4, self.request.call_count)
+
+    def test_all_quota_limited_keys_are_tried_once_then_pause(self):
+        def fail(request, **kwargs):
+            self.seen.append(request.get_header("X-goog-api-key"))
+            raise urllib.error.HTTPError(request.full_url, 429, "quota", {}, None)
+        self.request.side_effect = fail
+        with self.assertRaisesRegex(ProviderError, "All configured"):
+            self.generate("quota-limited stage")
+        self.assertEqual(["test-one", "test-two", "test-three"], self.seen)
+        self.request.side_effect = self.respond
+        self.generate("quota-limited stage")
+        self.assertEqual("test-one", self.seen[-1])
+
+    def test_quota_failover_skips_duplicate_keys_and_still_caches_success(self):
+        self.settings.save(dict(api_key_3="test-two"))
+        def respond(request, **kwargs):
+            self.seen.append(request.get_header("X-goog-api-key"))
+            if len(self.seen) == 1:
+                raise urllib.error.HTTPError(request.full_url, 429, "quota", {}, None)
+            return io.BytesIO(self.raw)
+        self.request.side_effect = respond
+        self.generate("quota then success")
+        self.generate("quota then success")
+        self.assertEqual(["test-one", "test-two"], self.seen)
 
     def test_concurrent_courses_share_one_rotation(self):
         with ThreadPoolExecutor(max_workers=3) as pool:
