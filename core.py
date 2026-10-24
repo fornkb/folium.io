@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import re
+import shutil
 import sqlite3
 import threading
 import uuid
@@ -289,6 +290,49 @@ class Store:
         path = folder / (course_id + "-" + reason + "-" + uid() + ".folium.zip")
         path.write_bytes(self.export(course_id))
         return path
+
+    def delete_course(self, course_id):
+        """Remove a workspace course only after saving a complete recovery ZIP."""
+        if not re.fullmatch(r"[a-f0-9]{16}", course_id):
+            raise ValueError("Course not found.")
+        with self.lock:
+            self.course(course_id)
+            docs = self.docs(course_id)
+            root = self.root.resolve()
+            paths = []
+            for doc in docs:
+                if not re.fullmatch(r"[a-f0-9]{16}", doc["id"]):
+                    raise ValueError("Invalid stored document identity.")
+                paths.append(root / "documents" / (doc["id"] + ".pdf"))
+                paths.extend((root / "page_previews").glob(doc["id"] + "-*.png"))
+            derived = root / "visual_analysis" / course_id
+            # Resolve every cleanup target before deleting anything, including
+            # symlink/junction destinations. Never leave the configured data root.
+            targets = [path.resolve() for path in paths + [derived]]
+            if any(not path.is_relative_to(root) or path == root for path in targets) or targets != paths + [derived]:
+                raise ValueError("Course files must stay inside the local data folder.")
+            folder = (root / "backups").resolve()
+            if folder != root / "backups":
+                raise ValueError("Recovery copies must stay inside the local data folder.")
+            backup = self.backup(course_id, "deleted")
+            with self.db:
+                self.db.execute("DELETE FROM document_stats WHERE doc_id IN (SELECT id FROM documents WHERE course_id=?)", (course_id,))
+                for table in ("documents", "study_state", "course_summaries"):
+                    self.db.execute(f"DELETE FROM {table} WHERE course_id=?" if table != "course_summaries" else "DELETE FROM course_summaries WHERE id=?", (course_id,))
+                self.db.execute("DELETE FROM courses WHERE id=?", (course_id,))
+            pending = False
+            for path in targets[:-1]:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pending = True
+            if derived.exists():
+                try:
+                    shutil.rmtree(targets[-1])
+                except OSError:
+                    pending = True
+            return dict(deleted=course_id, recovery_backup=backup.name,
+                        recovery_url="/api/recovery/" + backup.name, cleanup_pending=pending)
 
     def extend(self, course_id, new_modules):
         with self.lock:

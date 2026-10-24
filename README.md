@@ -60,9 +60,15 @@ The server listens on `127.0.0.1` only. The default port is `8765`; `FOLIUM_PORT
 
 1. Create a course and upload PDFs, identifying each as a syllabus, learning material, or past paper.
 2. Inspect visual pages locally. Review the suggested scan/diagram selection and explicitly analyze it, or exclude it. Then prepare scope and outline; review topics, depth, conventions, unresolved pages, exclusions, prerequisites, and physical PDF source ranges.
-3. Start lesson preparation. Successful teaching plans and individual lessons are saved as they finish. The course becomes readable without preparing assessments or cards.
+3. Start lesson preparation. Successful teaching plans and individual lessons are saved as they finish. Once a module is saved, choose **Explore ready modules** to read it while the remaining modules generate. Keep the local server running; navigation and reading do not start another AI request.
 4. Open a module to study. When wanted, explicitly choose **Generate practice & cards** from Practice or Flashcards. Uploaded past papers have their own explicit preparation action in Past papers.
 5. Export a course ZIP when you want a portable backup. Import it into another local installation to restore it.
+
+The ready-module map has its own saved URL and survives browser reloads. Unfinished modules lead to preparation; a progress notice shows background work and provides a way back to setup. New module arrivals and completion update the reader's status without replacing its teaching or notes editor.
+
+**Delete course** is available on library cards and course pages. Confirming deletion first saves a complete recovery ZIP in `data/backups`, then removes the course, document records, study state, summaries, original workspace PDFs, and derived previews. The deletion notice links to the recovery download; restore it with **Import course**. Deletion is blocked while a preparation job is active, and a failed recovery backup leaves the course intact. Existing backups and the shared provider-response cache remain local; deletion removes the active workspace rather than erasing every historical copy.
+
+New outlines group related concepts and overlapping native/visual evidence into coherent learning units. Lesson counts follow the module's distinct learning goals; a single lesson can cover several related topics. Teaching uses a natural nonempty section list, with detailed central reasoning and proportionate supporting definitions. These are generation instructions, not a guarantee of a particular module count or improved content quality. Saved outlines, plans, and lessons remain unchanged when prompts are updated.
 
 For new courses, preparation first processes all readable learning text into saved scope records. Batches are bounded to 24,000 text characters and 24 segments, prefer available section boundaries, split dense pages without dropping their tails, remove exact repeated boundary boilerplate, and share analysis of exact duplicate pages while retaining every physical location. Empty and damaged-text pages remain visibly unresolved. PYQs use a separate path.
 

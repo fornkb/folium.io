@@ -4,7 +4,7 @@ const $=(s,root=document)=>root.querySelector(s);
 const $$=(s,root=document)=>[...root.querySelectorAll(s)];
 const state={courses:[],settings:{has_key:false,model:'gemini-3.8-flash',task_model:'gemini-3.5-flash-lite',vision_model:'gemini-3.5-flash-lite',interval:6},view:'graph',zoom:null,
   files:[],draft:[],draftCid:null,scopeExclusions:[],scopeGapsAccepted:false,review:null,quizzes:{},theme:localStorage.getItem('folium-theme')||'light',
-  current:{},allowPrepared:null,previousRoute:'',notesPending:null};
+  current:{},allowPrepared:null,previousRoute:'',notesPending:null,lastDeletion:null};
 let toastTimer,notesTimer,lastFocus,notesFlight=null;
 
 async function api(path,body){
@@ -87,12 +87,13 @@ function render(){
             body+=UI.flashcard(state.review);
           }
         }
-      }else if(r[2]==='setup'||c.status!=='ready'&&state.allowPrepared!==c.id){
+      }else if(r[2]==='setup'||c.status!=='ready'&&r[2]!=='explore'&&state.allowPrepared!==c.id){
         if(state.draftCid!==c.id){state.draft=structuredClone(c.modules);state.scopeExclusions=structuredClone(c.scope_exclusions||[]);state.scopeGapsAccepted=!!c.scope_review;state.draftCid=c.id;}
         body=UI.setupView(c,state.draft,state.settings,state.scopeExclusions,state.scopeGapsAccepted);
       }else{body=UI.courseView(c,state.view,state.zoom||1);}
+      if(r[2]!=='setup'&&(r[2]==='module'||r[2]==='explore'||c.status==='ready'||state.allowPrepared===c.id))body=`<div id="preparation-status">${UI.preparationNotice(c)}</div>`+body;
     }
-  }else{body=UI.library(state.courses);}
+  }else{body=(state.lastDeletion?UI.deletionReceipt(state.lastDeletion):'')+UI.library(state.courses);}
   document.title=`${title} — Folium`;
   $('#app').innerHTML=shell(body,title,active,cid);
   for(const id of openScopeDetails){const detail=$(`details[data-scope-detail="${CSS.escape(id)}"]`);if(detail)detail.open=true;}
@@ -230,12 +231,29 @@ document.addEventListener('click',async event=>{
   try{
     const {c,m}=state.current;
     if(action==='skip-content'){event.preventDefault();$('#main').focus();$('#main').scrollIntoView();}
-    if(['prepare-outline','inspect-visual','analyze-visual','save-visual','skip-visual','include-visual-page','resume','generate-course','generate-practice','generate-papers','save-outline','save-notes','submit-quiz','rate-card','clear-key','bookmark','mark-read'].includes(action)){busy=true;el.disabled=true;}
+    if(['prepare-outline','inspect-visual','analyze-visual','save-visual','skip-visual','include-visual-page','resume','generate-course','generate-practice','generate-papers','save-outline','save-notes','submit-quiz','rate-card','clear-key','bookmark','mark-read','confirm-delete-course'].includes(action)){busy=true;el.disabled=true;}
     if(action==='sidebar'){$('#sidebar').classList.add('open');$('.mobile-shade').classList.add('open');}
     if(action==='close-sidebar'){$('#sidebar').classList.remove('open');$('.mobile-shade').classList.remove('open');}
     if(action==='import')$('#import-input').click();
     if(action==='search')searchModal();
     if(action==='close-modal')closeModal();
+    if(action==='dismiss-deletion'){state.lastDeletion=null;render();}
+    if(action==='delete-course'){
+      const target=state.courses.find(c=>c.id===el.dataset.course);
+      if(target)openModal(UI.deleteCourseDialog(target),'[data-action="close-modal"]');
+    }
+    if(action==='confirm-delete-course'){
+      const cid=el.dataset.course;
+      await flushNotes();
+      const receipt=await api(`/courses/${cid}/delete`,{confirm:cid});
+      state.courses=state.courses.filter(c=>c.id!==cid);state.lastDeletion=receipt;
+      for(const key of Object.keys(state.quizzes))if(key.startsWith(cid+':'))delete state.quizzes[key];
+      for(const key of Object.keys(sessionStorage))if(key.startsWith('folium-quiz-'+cid+':'))sessionStorage.removeItem(key);
+      if(state.draftCid===cid){state.draftCid=null;state.draft=[];}
+      if(state.allowPrepared===cid)state.allowPrepared=null;
+      if(state.review?.cards.some(card=>card.cid===cid))state.review=null;
+      closeModal();goto('#/');toast('Course deleted. Your recovery copy is saved.');
+    }
     if(action==='source')source(el.dataset.doc,el.dataset.page);
     if(action==='source-text'){
       const input=$('#source-page'),text=$('#source-text'),image=$('#source-image');
@@ -277,7 +295,7 @@ document.addEventListener('click',async event=>{
     if(action==='generate-papers'){await flushNotes();await prepare('papers');render();}
     if(action==='generate-course'){await saveOutline();await prepare('generate');}
     if(action==='resume')await prepare(['practice','papers'].includes(c.job?.action)?c.job.action:c.modules.length?'generate':['inspect','visual','visual_render'].includes(c.job?.stage)?(c.job.stage==='inspect'?'inspect':'visual'):'outline',c.job?.module_id||null);
-    if(action==='open-prepared'){state.allowPrepared=c.id;goto(link(c.id));}
+    if(action==='open-prepared'){state.allowPrepared=c.id;goto(link(c.id)+'/explore');}
     if(action==='start-review')startReview(el.dataset.course);
     if(action==='flip-card'){if(state.review){state.review.flipped=!state.review.flipped;const y=scrollY;render();scrollTo(0,y);}}
     if(action==='rate-card'){
@@ -382,25 +400,36 @@ window.addEventListener('beforeunload',()=>{
 });
 
 let polling=false;
-setInterval(async()=>{
+async function pollCourses(){
   if(polling)return;const active=state.courses.filter(c=>c.job?.state==='running');if(!active.length)return;
   polling=true;
   try{
-    for(const old of active){let c=await api('/courses/'+old.id+'/status');
+    for(const old of active){let c;
+      try{c=await api('/courses/'+old.id+'/status');}catch(error){if(!state.courses.some(c=>c.id===old.id))continue;throw error;}
+      if(!state.courses.some(c=>c.id===old.id))continue;
       const packageState=x=>JSON.stringify(x.modules.map(m=>[m.id,!!m.package,m.package?.assessment_status]));
       if(!old.summary){
         if(c.job?.state!=='running'||packageState(c)!==packageState(old))c=await api('/courses/'+old.id);
         else{old.job=c.job;old.status=c.status;old.updated=c.updated;c=old;}
       }
+      if(!state.courses.some(c=>c.id===old.id))continue;
       updateCourse(c);if(c.job?.state==='complete'&&c.modules.length)state.draftCid=null;
       const r=route();if(r[0]==='course'&&r[1]===c.id&&r[2]!=='module'){
         if(c.status==='ready'){state.allowPrepared=null;goto(link(c.id));}else render();
-      }else if(r[0]==='course'&&r[1]===c.id&&r[2]==='module'&&['practice','cards','pyqs'].includes(r[4])&&['practice','papers'].includes(c.job?.action)){
-        if(c.job.state==='complete')state.review=null;render();
+      }else if(r[0]==='course'&&r[1]===c.id&&r[2]==='module'){
+        const previous=state.current.m;
+        state.current.c=c;state.current.m=c.modules.find(m=>m.id===r[3]);
+        const banner=$('#preparation-status'),html=UI.preparationNotice(c);
+        if(banner&&banner.innerHTML!==html)banner.innerHTML=html;
+        if(!previous?.package&&state.current.m?.package)render();
+        else if(['practice','cards','pyqs'].includes(r[4])&&['practice','papers'].includes(c.job?.action)){
+          if(c.job.state==='complete')state.review=null;render();
+        }
       }else if(!r[0])render();
     }
   }catch(error){toast(error.message,true);}finally{polling=false;}
-},2500);
+}
+setInterval(pollCourses,2500);
 
 async function init(){
   try{[state.courses,state.settings]=await Promise.all([api('/courses'),api('/settings')]);await loadRouteCourse();render();const {c,m,tab}=state.current;if(c&&m&&tab==='study')requestAnimationFrame(()=>scrollTo(0,Number(localStorage.getItem(`folium-position-${c.id}-${m.id}`)||0)));

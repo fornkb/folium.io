@@ -108,6 +108,12 @@ def create_server(data_dir, port=8765, env_file=None):
                         return self.send(200, settings.public())
                     if path == "/api/courses":
                         return self.send(200, store.summaries())
+                    match = re.fullmatch(r"/api/recovery/([a-f0-9]{16}-deleted-[a-f0-9]{16}\.folium\.zip)", path)
+                    if match:
+                        target = (store.root / "backups" / match[1]).resolve()
+                        if not target.is_relative_to(store.root.resolve()) or not target.is_file():
+                            raise ValueError("That recovery copy is not available.")
+                        return self.send(200, target.read_bytes(), "application/zip", match[1])
                     match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/status", path)
                     if match:
                         return self.send(200, store.summary(match[1]))
@@ -211,10 +217,14 @@ def create_server(data_dir, port=8765, env_file=None):
                     course["warnings"] = warnings
                     store.save(course)
                     return self.send(201, self.public(course["id"]))
-                match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/(visual|outline|extend|prepare|modules/([^/]+)/(progress|quiz|review))", path)
+                match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/(delete|visual|outline|extend|prepare|modules/([^/]+)/(progress|quiz|review))", path)
                 if match:
                     cid, action, mid, subaction = match[1], match[2], match[3], match[4]
                     course = store.course(cid)
+                    if action == "delete":
+                        if body.get("confirm") != cid:
+                            raise ValueError("Confirm the course you want to delete.")
+                        return self.send(200, jobs.delete_course(cid))
                     if action=="visual":
                         if cid in jobs.active or course.get("scope") or course["modules"]:
                             raise ValueError("Visual selection is locked once scope preparation starts.")

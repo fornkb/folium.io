@@ -484,12 +484,20 @@ class Jobs:
         if action == "outline" and course["modules"]:
             return course
         with self.lock:
+            # Deletion can finish while earlier validation was reading the course.
+            self.store.course(course_id)
             if course_id in self.active:
                 return course
             self.active.add(course_id)
         self._status(course_id, "running", "lessons" if action == "generate" else action, "Preparing your course…", action=action, module_id=module_id)
         threading.Thread(target=self._run, args=(course_id, action, module_id), daemon=True).start()
         return self.store.course(course_id)
+
+    def delete_course(self, course_id):
+        with self.lock:
+            if course_id in self.active:
+                raise ValueError("Preparation is still running. Delete the course after it finishes or pauses.")
+            return self.store.delete_course(course_id)
 
     def _status(self, cid, state, stage, message, done=0, total=1, **identity):
         def update(c):
