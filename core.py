@@ -515,8 +515,8 @@ def validate_outline(modules):
 def validate_teaching(pkg, allowed):
     if not isinstance(pkg, dict) or not clean(pkg.get("overview")):
         raise ValueError("The generated lesson is incomplete. Resume to retry this module.")
-    if not isinstance(pkg.get("sections"), list) or len(pkg["sections"]) < 3:
-        raise ValueError("The generated lesson needs at least three teaching sections.")
+    if not isinstance(pkg.get("sections"), list) or not pkg["sections"]:
+        raise ValueError("The generated lesson needs teaching content.")
     if not isinstance(pkg.get("objectives"), list) or not pkg["objectives"] or not all(isinstance(x,str) and x.strip() for x in pkg["objectives"]):
         raise ValueError("The generated lesson needs clear learning objectives.")
     if not isinstance(pkg.get("diagrams", []), list):
