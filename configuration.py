@@ -12,7 +12,7 @@ from core import clean
 API_KEY_FIELDS = ("api_key", "api_key_2", "api_key_3")
 KEY_ENV_NAMES = tuple(("GEMINI_API_KEY" + suffix, "GOOGLE_API_KEY" + suffix)
                       for suffix in ("", "_2", "_3"))
-CONFIG_KEYS = tuple(name for names in KEY_ENV_NAMES for name in names) + ("GEMINI_MODEL", "GEMINI_VISION_MODEL", "FOLIUM_PORT")
+CONFIG_KEYS = tuple(name for names in KEY_ENV_NAMES for name in names) + ("GEMINI_MODEL", "GEMINI_TASK_MODEL", "GEMINI_VISION_MODEL", "FOLIUM_PORT")
 
 
 def environment_values():
@@ -109,13 +109,14 @@ class Settings:
         value["key_source"] = slots[0]["key_source"]
         value["has_saved_key"] = slots[0]["has_saved_key"]
         value["model"] = value.get("model") or external.get("GEMINI_MODEL") or "gemini-3.8-flash"
-        value["vision_model"] = value.get("vision_model") or external.get("GEMINI_VISION_MODEL") or value["model"]
+        value["task_model"] = value.get("task_model") or external.get("GEMINI_TASK_MODEL") or "gemini-3.5-flash-lite"
+        value["vision_model"] = value.get("vision_model") or external.get("GEMINI_VISION_MODEL") or value["task_model"]
         value.setdefault("interval", 6)
         return value
 
     def public(self):
         value = self.get()
-        return dict(has_key=bool(value["api_keys"]), model=value["model"], vision_model=value["vision_model"], interval=value["interval"],
+        return dict(has_key=bool(value["api_keys"]), model=value["model"], task_model=value["task_model"], vision_model=value["vision_model"], interval=value["interval"],
                     key_source=value["key_source"], has_saved_key=value["has_saved_key"],
                     key_count=len(value["api_keys"]), key_slots=value["key_slots"],
                     env_file_found=self.env_file.is_file())
@@ -125,6 +126,9 @@ class Settings:
         model = clean(body.get("model", effective["model"]), 100)
         if not re.fullmatch(r"gemini-[a-zA-Z0-9.\-]+", model):
             raise ValueError("Enter a valid Gemini model name.")
+        task_model = clean(body.get("task_model", effective["task_model"]), 100)
+        if not re.fullmatch(r"gemini-[a-zA-Z0-9.\-]+", task_model):
+            raise ValueError("Enter a valid Gemini model name for other tasks.")
         vision_model = clean(body.get("vision_model", effective["vision_model"]),100)
         if not re.fullmatch(r"gemini-[a-zA-Z0-9.\-]+",vision_model):
             raise ValueError("Enter a valid Gemini visual model name.")
@@ -139,6 +143,8 @@ class Settings:
                 if body.get(field.replace("api_key", "clear_key")):
                     saved.pop(field, None)
             saved["model"], saved["interval"] = model, interval
+            if "task_model" in body:
+                saved["task_model"] = task_model
             if "vision_model" in body:
                 saved["vision_model"] = vision_model
             tmp = self.path.with_suffix(".tmp")

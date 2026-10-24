@@ -104,7 +104,10 @@ class Gemini:
 
     def generate(self, prompt, schema, validator=lambda x: x, *, pdf=None, model=None):
         settings = self.settings.get()
-        selected_model = model or settings["model"]
+        # Legacy combined lessons still write teaching; planning and all other
+        # preparation use the lighter task model. The model is part of the cache key.
+        teaching = schema in (TEACHING, SCOPED_TEACHING, PACKAGE, SCOPED_PACKAGE)
+        selected_model = model or settings["model" if teaching else "task_model"]
         system = SYSTEM + ("\n\n" + TEACHING_SYSTEM if schema in (TEACHING, SCOPED_TEACHING) else "")
         cache_identity = [VERSION, selected_model, system, prompt, schema]
         if pdf is not None:
@@ -534,8 +537,10 @@ class Jobs:
         course=self.store.course(cid);visual=course["visual"];docs=self.store.docs(cid)
         if not visual["selection_reviewed"]:
             raise ValueError("Review the visual page selection first.")
-        if "model" not in visual:
-            visual["model"]=self.provider.settings.get()["vision_model"]
+        selected_model=self.provider.settings.get()["vision_model"]
+        if visual.get("model") != selected_model:
+            # A settings change applies to missing batches, never to saved results.
+            visual["model"]=selected_model
             self.store.update(cid,lambda c:c.update(visual=visual))
         folder=self.store.root/"visual_analysis"/cid
         completed=page_results(visual)

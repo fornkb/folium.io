@@ -173,7 +173,12 @@ class VisualTests(unittest.TestCase):
             saved=store.course(c["id"])["visual"]
             self.assertEqual(1,len(saved["batches"]));self.assertEqual(4,len(page_results(saved)))
             store.close();store=Store(folder);fresh=VisualProvider(store,doc["id"])
-            Jobs(store,fresh)._visual(c["id"])
+            fresh.settings.save(dict(vision_model="gemini-3.5-flash-lite"))
+            with patch.object(fresh,"generate",wraps=fresh.generate) as generate:
+                Jobs(store,fresh)._visual(c["id"])
+            self.assertEqual("gemini-3.5-flash-lite",generate.call_args.kwargs["model"])
+            for key,batch in saved["batches"].items():
+                self.assertEqual(batch,store.course(c["id"])["visual"]["batches"][key])
             self.assertEqual(1,len(fresh.calls));self.assertEqual(5,len(page_results(store.course(c["id"])["visual"])));store.close()
 
     def test_backup_remaps_visual_sources_and_reuses_successful_analysis(self):

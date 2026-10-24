@@ -2,7 +2,7 @@ import * as UI from './ui.js';
 const {esc,icon,link,enc}=UI;
 const $=(s,root=document)=>root.querySelector(s);
 const $$=(s,root=document)=>[...root.querySelectorAll(s)];
-const state={courses:[],settings:{has_key:false,model:'gemini-3.8-flash',interval:6},view:'graph',zoom:null,
+const state={courses:[],settings:{has_key:false,model:'gemini-3.8-flash',task_model:'gemini-3.5-flash-lite',vision_model:'gemini-3.5-flash-lite',interval:6},view:'graph',zoom:null,
   files:[],draft:[],draftCid:null,scopeExclusions:[],scopeGapsAccepted:false,review:null,quizzes:{},theme:localStorage.getItem('folium-theme')||'light',
   current:{},allowPrepared:null,previousRoute:'',notesPending:null};
 let toastTimer,notesTimer,lastFocus,notesFlight=null;
@@ -303,7 +303,7 @@ document.addEventListener('submit',async event=>{
       const saved=await api(`/courses/${c.id}/extend`,{modules:[module]});
       updateCourse(saved);state.allowPrepared=null;closeModal();goto(link(c.id)+'/setup');toast('Module added. Ready to prepare only the missing content.');
     }else if(form.id==='settings-form'){
-      const data=new FormData(form);state.settings=await api('/settings',{api_key:data.get('api_key'),api_key_2:data.get('api_key_2'),api_key_3:data.get('api_key_3'),model:data.get('model'),vision_model:data.get('vision_model'),interval:Number(data.get('interval'))});render();toast('Your connection settings are saved.');
+      const data=new FormData(form);state.settings=await api('/settings',{api_key:data.get('api_key'),api_key_2:data.get('api_key_2'),api_key_3:data.get('api_key_3'),model:data.get('model'),task_model:data.get('task_model'),vision_model:data.get('vision_model'),interval:Number(data.get('interval'))});render();toast('Your connection settings are saved.');
     }else{
       if(!state.files.length)throw new Error('Add at least one course PDF.');
       if(state.files.every(f=>f.role==='pyq'))throw new Error('Add a syllabus or learning material alongside your past papers.');

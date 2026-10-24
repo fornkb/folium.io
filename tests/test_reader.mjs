@@ -77,4 +77,7 @@ assert.match(visualForm,/gemini-vision/);
 assert.match(visualForm,/&lt;script&gt;bad/);
 assert.doesNotMatch(visualForm,/<script>/);
 assert.match(settings,/name="vision_model"/);
+assert.match(settings,/Learning content model/);
+assert.match(settings,/Other preparation tasks/);
+assert.match(settings,/name="task_model" value="gemini-3.5-flash-lite"/);
 console.log('Reader safety, Markdown, offline math, shuffled canonical options, and private key controls passed.');
