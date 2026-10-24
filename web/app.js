@@ -3,7 +3,7 @@ const {esc,icon,link,enc}=UI;
 const $=(s,root=document)=>root.querySelector(s);
 const $$=(s,root=document)=>[...root.querySelectorAll(s)];
 const state={courses:[],settings:{has_key:false,model:'gemini-3.8-flash',interval:6},view:'graph',zoom:null,
-  files:[],draft:[],draftCid:null,review:null,quizzes:{},theme:localStorage.getItem('folium-theme')||'light',
+  files:[],draft:[],draftCid:null,scopeExclusions:[],scopeGapsAccepted:false,review:null,quizzes:{},theme:localStorage.getItem('folium-theme')||'light',
   current:{},allowPrepared:null,previousRoute:'',notesPending:null};
 let toastTimer,notesTimer,lastFocus;
 
@@ -39,6 +39,7 @@ function shell(body,pageTitle='My courses',active='courses',cid=null){
 }
 
 function render(){
+  const openScopeDetails=$$('details[data-scope-detail][open]').map(d=>d.dataset.scopeDetail);
   const r=route();let body,title='My courses',active='courses',cid=null;
   state.current={};document.body.classList.toggle('dark',state.theme==='dark');
   if(r[0]==='settings'){body=UI.settingsView(state.settings,state.theme);title='Settings';active='settings';}
@@ -70,13 +71,14 @@ function render(){
           }
         }
       }else if(r[2]==='setup'||c.status!=='ready'&&state.allowPrepared!==c.id){
-        if(state.draftCid!==c.id){state.draft=structuredClone(c.modules);state.draftCid=c.id;}
-        body=UI.setupView(c,state.draft,state.settings);
+        if(state.draftCid!==c.id){state.draft=structuredClone(c.modules);state.scopeExclusions=structuredClone(c.scope_exclusions||[]);state.scopeGapsAccepted=!!c.scope_review;state.draftCid=c.id;}
+        body=UI.setupView(c,state.draft,state.settings,state.scopeExclusions,state.scopeGapsAccepted);
       }else{body=UI.courseView(c,state.view,state.zoom||1);}
     }
   }else{body=UI.library(state.courses);}
   document.title=`${title} — Folium`;
   $('#app').innerHTML=shell(body,title,active,cid);
+  for(const id of openScopeDetails){const detail=$(`details[data-scope-detail="${CSS.escape(id)}"]`);if(detail)detail.open=true;}
   document.body.classList.remove('map-open');
   requestAnimationFrame(applyGraphZoom);
   if(r[0]==='new')renderFiles();
@@ -118,9 +120,24 @@ function captureDraft(){
     const title=$('[data-draft-title="'+CSS.escape(m.id)+'"]'),topics=$('[data-draft-topics="'+CSS.escape(m.id)+'"]');
     if(title)m.title=title.value.trim();if(topics)m.topics=topics.value.split('\n').map(x=>x.trim()).filter(Boolean);
     m.prerequisites=$$('[data-draft-parent="'+CSS.escape(m.id)+'"]:checked').map(x=>x.value);
+    if(state.current.c?.scope_records){
+      m.scope_ids=$$('[data-draft-scope="'+CSS.escape(m.id)+'"]:checked').map(x=>x.value);
+      m.source_ranges=$$('[data-range-doc="'+CSS.escape(m.id)+'"]').map(x=>({doc_id:x.value,start_page:Number($(`[data-range-start="${CSS.escape(m.id)}"][data-index="${x.dataset.index}"]`).value),end_page:Number($(`[data-range-end="${CSS.escape(m.id)}"][data-index="${x.dataset.index}"]`).value)}));
+      m.scope_notes=$('[data-draft-scope-notes="'+CSS.escape(m.id)+'"]')?.value||'';
+    }
   }
+  state.scopeExclusions=$$('[data-scope-exclusion]').filter(x=>x.value.trim()).map(x=>({scope_id:x.dataset.scopeExclusion,reason:x.value.trim()}));
+  state.scopeGapsAccepted=!!$('#acknowledge-scope-gaps')?.checked||!!state.current.c?.scope_review;
 }
-async function saveOutline(){captureDraft();const c=state.current.c;const saved=await api(`/courses/${c.id}/outline`,{modules:state.draft});updateCourse(saved);state.draft=structuredClone(saved.modules);return saved;}
+async function saveOutline(){captureDraft();const c=state.current.c;const saved=await api(`/courses/${c.id}/outline`,{modules:state.draft,scope_exclusions:state.scopeExclusions,acknowledge_gaps:state.scopeGapsAccepted});updateCourse(saved);state.draft=structuredClone(saved.modules);return saved;}
+function addScopeRanges(module,records){
+  const pairs=new Map();
+  for(const r of module.source_ranges||[])for(let page=r.start_page;page<=r.end_page;page++)pairs.set(`${r.doc_id}:${page}`,{doc_id:r.doc_id,page});
+  for(const r of records)for(const page of r.pages)pairs.set(`${r.doc_id}:${page}`,{doc_id:r.doc_id,page});
+  const sorted=[...pairs.values()].sort((a,b)=>a.doc_id.localeCompare(b.doc_id)||a.page-b.page),ranges=[];
+  for(const r of sorted){const last=ranges.at(-1);if(last?.doc_id===r.doc_id&&last.end_page===r.page-1)last.end_page=r.page;else ranges.push({doc_id:r.doc_id,start_page:r.page,end_page:r.page});}
+  module.source_ranges=ranges;
+}
 async function prepare(action){const c=state.current.c;const saved=await api(`/courses/${c.id}/prepare`,{action});updateCourse(saved);render();}
 async function progress(body){
   const {c,m}=state.current;
@@ -213,13 +230,15 @@ document.addEventListener('click',async event=>{
     }
     if(action==='reset-quiz'){state.quizzes[quizKey(c,m)]=newQuiz(m,getQuiz(c,m).topic);saveQuiz(c,m);render();window.scrollTo(0,0);}
     if(action==='extend-course'){
-      openModal(`<section class="modal extend-modal" role="dialog" aria-modal="true" aria-labelledby="extend-title"><div class="modal-head"><h2 id="extend-title">Make room for a missing topic.</h2><button class="icon-btn" data-action="close-modal" aria-label="Close">${icon('close')}</button></div><form id="extend-form" class="modal-body"><p class="muted">Add a module from your existing materials. Your saved modules stay available, and a backup is created before the addition.</p><div class="field"><label for="extend-title-input">Module title</label><input id="extend-title-input" name="title" required maxlength="150"></div><div class="field"><label for="extend-topics">Topics · one per line</label><textarea id="extend-topics" name="topics" required></textarea></div><div class="field"><label>Prerequisites</label><div class="prereq-select">${c.modules.map(m=>`<label><input type="checkbox" name="parents" value="${esc(m.id)}">${esc(m.title)}</label>`).join('')}</div></div><p class="small-text muted">Adding a module uses no AI calls. Starting preparation uses one plan call, then one call per lesson.</p><button class="btn primary" type="submit">Save missing module ${icon('arrow')}</button></form></section>`,'#extend-title-input');
+      openModal(`<section class="modal extend-modal" role="dialog" aria-modal="true" aria-labelledby="extend-title"><div class="modal-head"><h2 id="extend-title">Make room for a missing topic.</h2><button class="icon-btn" data-action="close-modal" aria-label="Close">${icon('close')}</button></div><form id="extend-form" class="modal-body"><p class="muted">Add a module from your existing materials. Your saved modules stay available, and a backup is created before the addition.</p><div class="field"><label for="extend-title-input">Module title</label><input id="extend-title-input" name="title" required maxlength="150"></div><div class="field"><label for="extend-topics">Topics · one per line</label><textarea id="extend-topics" name="topics" required></textarea></div>${c.scope_records?`<div class="field"><label>Reviewed source scope for the new module</label>${c.scope_records.map(r=>`<label class="scope-choice"><input type="checkbox" name="scope_ids" value="${esc(r.id)}"><span>${esc(r.title)}<small>${esc(r.depth)}</small></span></label>`).join('')}</div><div class="field"><label for="extend-scope-notes">Scope and depth clarifications</label><textarea id="extend-scope-notes" name="scope_notes" maxlength="12000"></textarea></div>`:''}<div class="field"><label>Prerequisites</label><div class="prereq-select">${c.modules.map(m=>`<label><input type="checkbox" name="parents" value="${esc(m.id)}">${esc(m.title)}</label>`).join('')}</div></div><p class="small-text muted">Adding a module uses no AI calls. Starting preparation uses one plan call, then one call per lesson.</p><button class="btn primary" type="submit">Save missing module ${icon('arrow')}</button></form></section>`,'#extend-title-input');
     }
     if(action==='save-notes'){await flushNotes();toast('Your notes are saved.');}
     if(action==='remove-file'){state.files.splice(Number(el.dataset.index),1);renderFiles();}
     if(action==='prepare-outline')await prepare('outline');
     if(action==='save-outline'){await saveOutline();render();toast('Course outline saved.');}
-    if(action==='add-module'){captureDraft();if(state.draft.length>=20)throw new Error('Keep this course to 20 modules or fewer.');state.draft.push({id:'m'+Date.now(),title:'New module',description:'',topics:['New topic'],prerequisites:[]});render();}
+    if(action==='add-module'){captureDraft();if(state.draft.length>=20)throw new Error('Keep this course to 20 modules or fewer.');state.draft.push({id:'m'+Date.now(),title:'New module',description:'',topics:['New topic'],prerequisites:[],scope_ids:[],source_ranges:[],scope_notes:''});render();}
+    if(action==='add-range'){captureDraft();const m=state.draft.find(m=>m.id===el.dataset.module),doc=c.documents.find(d=>d.role!=='pyq');if(doc){m.source_ranges.push({doc_id:doc.id,start_page:1,end_page:1});render();}}
+    if(action==='remove-range'){captureDraft();state.draft.find(m=>m.id===el.dataset.module).source_ranges.splice(Number(el.dataset.index),1);render();}
     if(action==='remove-module'){captureDraft();const removed=state.draft.splice(Number(el.dataset.index),1)[0];state.draft.forEach(x=>x.prerequisites=x.prerequisites.filter(id=>id!==removed.id));render();}
     if(action==='generate-course'){await saveOutline();await prepare('generate');}
     if(action==='resume')await prepare(c.modules.length?'generate':'outline');
@@ -244,7 +263,9 @@ document.addEventListener('submit',async event=>{
   try{
     if(form.id==='extend-form'){
       const data=new FormData(form),c=state.current.c;
-      const saved=await api(`/courses/${c.id}/extend`,{modules:[{id:'m'+Date.now(),title:data.get('title'),topics:String(data.get('topics')).split('\n').map(t=>t.trim()).filter(Boolean),prerequisites:data.getAll('parents')}]});
+      const module={id:'m'+Date.now(),title:data.get('title'),topics:String(data.get('topics')).split('\n').map(t=>t.trim()).filter(Boolean),prerequisites:data.getAll('parents')};
+      if(c.scope_records){module.scope_ids=data.getAll('scope_ids');module.scope_notes=String(data.get('scope_notes')||'');addScopeRanges(module,c.scope_records.filter(r=>module.scope_ids.includes(r.id)));}
+      const saved=await api(`/courses/${c.id}/extend`,{modules:[module]});
       updateCourse(saved);state.allowPrepared=null;closeModal();goto(link(c.id)+'/setup');toast('Module added. Ready to prepare only the missing content.');
     }else if(form.id==='settings-form'){
       const data=new FormData(form);state.settings=await api('/settings',{api_key:data.get('api_key'),api_key_2:data.get('api_key_2'),api_key_3:data.get('api_key_3'),model:data.get('model'),interval:Number(data.get('interval'))});render();toast('Your connection settings are saved.');
@@ -262,6 +283,12 @@ document.addEventListener('submit',async event=>{
 
 document.addEventListener('change',async event=>{
   const el=event.target;
+  if(el.dataset.draftScope){
+    captureDraft();const m=state.draft.find(m=>m.id===el.dataset.draftScope),y=scrollY;
+    addScopeRanges(m,state.current.c.scope_records.filter(r=>m.scope_ids.includes(r.id)));
+    const mapped=new Set(state.draft.flatMap(m=>m.scope_ids||[]));state.scopeExclusions=state.scopeExclusions.filter(r=>!mapped.has(r.scope_id));
+    render();scrollTo(0,y);
+  }
   if(el.id==='practice-topic'){
     const {c,m}=state.current;state.quizzes[quizKey(c,m)]=newQuiz(m,el.value);saveQuiz(c,m);const y=scrollY;render();scrollTo(0,y);
   }

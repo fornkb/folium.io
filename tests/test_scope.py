@@ -8,10 +8,10 @@ from unittest.mock import patch
 
 from core import Store
 from generation import (Jobs, ProviderError, SCOPE_BATCH, SCOPE_MERGE, OUTLINE,
-                        TEACHING_PLAN, SCOPED_TEACHING_PLAN, scoped_excerpts, Gemini, Settings)
+                        TEACHING_PLAN, SCOPED_TEACHING_PLAN, scoped_excerpts, Gemini, Settings, validate_plan)
 from scope import (prepare_sources, validate_batch, records_for, review_outline,
                    ranges_for, coverage, validate_merge, catalogue, review_signature,
-                   validate_saved_scope, identity)
+                   validate_saved_scope, identity, module_packet)
 from fixtures import scope_fixture, pdf_fixture, lesson_fixture, TEST_MODULES
 from test_core import test_directory
 
@@ -249,4 +249,57 @@ class ScopeTests(unittest.TestCase):
             self.assertEqual(1,len(rows));self.assertTrue(rows[0][0].startswith("raw:"))
             self.assertNotIn("private-test-key",rows[0][1])
             self.assertEqual(11,json.loads(rows[0][1])["usage"]["promptTokenCount"])
+            store.close()
+
+    def test_normalizing_validators_receive_original_response_on_cache_hit(self):
+        with test_directory() as folder:
+            store=Store(folder);settings=Settings(folder);settings.save(dict(api_key="private-test-key"))
+            response=json.dumps(dict(candidates=[dict(content=dict(parts=[dict(text='{"value": 1}')]))])).encode()
+            validator=lambda value:dict(normalized=value["value"]+1)
+            provider=Gemini(store,settings)
+            with patch("urllib.request.urlopen",return_value=io.BytesIO(response)) as network:
+                first=provider.generate("normalize",{},validator)
+                second=provider.generate("normalize",{},validator)
+                self.assertEqual(first,second);self.assertEqual(1,network.call_count)
+            store.close()
+
+    def test_lesson_plan_must_cover_scope_and_packet_uses_assigned_records(self):
+        plan=dict(overview="Overview",objectives=["Learn"],lessons=[dict(id="l1",title="Lesson",topics=["A"],concepts=["A"],gaps=[],scope_ids=["r1"])])
+        with self.assertRaisesRegex(ValueError,"omitted approved"):validate_plan(plan,["A"],["r1","r2"])
+        validate_plan(plan,["A"],["r1"])
+        with test_directory() as folder:
+            store=Store(folder);c=store.create("Packets");store.add_pdf(c["id"],"notes.pdf","material",pdf_fixture())
+            Jobs(store,ScopeProvider())._outline(c["id"]);c=store.course(c["id"])
+            batch=next(iter(c["scope"]["batches"].values()));extra=dict(batch["records"][0]);extra.update(id="different",title="Unrelated subject")
+            batch["records"].append(extra);m=c["modules"][0];m["scope_ids"].append("different")
+            packet=module_packet(c,m,[m["scope_ids"][0]])
+            self.assertEqual(1,len(packet["records"]));self.assertNotIn("Unrelated subject",json.dumps(packet))
+            store.close()
+
+    def test_fabricated_source_quotation_pauses_without_losing_plan(self):
+        class BadQuote(ScopeProvider):
+            def generate(self,prompt,schema,validator):
+                if schema not in (SCOPE_BATCH,OUTLINE,TEACHING_PLAN,SCOPED_TEACHING_PLAN,SCOPE_MERGE):
+                    package=lesson_fixture(TEST_MODULES[0],self.doc_id,1)
+                    for section in package["sections"]:section["provenance"]="source_excerpt"
+                    package["sections"][0]["body"]="A fabricated quotation that is absent from the PDF."
+                    return validator(package)
+                return super().generate(prompt,schema,validator)
+        with test_directory() as folder:
+            store=Store(folder);c=store.create("Quotes");doc=store.add_pdf(c["id"],"notes.pdf","material",pdf_fixture())
+            jobs=Jobs(store,BadQuote(doc["id"]));jobs._outline(c["id"])
+            with self.assertRaisesRegex(ValueError,"match the supplied original"):jobs._packages(c["id"])
+            m=store.course(c["id"])["modules"][0]
+            self.assertIn("plan",m["preparation"]);self.assertNotIn("package",m)
+            store.close()
+
+    def test_original_quote_survives_backup_and_changed_wording_is_rejected(self):
+        with test_directory() as folder:
+            store=Store(folder);c=store.create("Original quote");doc=store.add_pdf(c["id"],"notes.pdf","material",pdf_fixture())
+            module=copy.deepcopy(TEST_MODULES[0]);pkg=lesson_fixture(module,doc["id"],1)
+            section=pkg["sections"][0];section.update(provenance="source_excerpt",body="Core concept")
+            module["package"]=pkg;c.update(modules=[module],status="ready");store.save(c)
+            store.import_course(store.export(c["id"]))
+            section["body"]="Invented original wording";store.save(c)
+            with self.assertRaisesRegex(ValueError,"does not match"):store.import_course(store.export(c["id"]))
             store.close()

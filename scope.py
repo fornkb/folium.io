@@ -64,7 +64,7 @@ def prepare_sources(docs, budget=BATCH_CHARS):
         for segment in segments:
             heading = segment["text"].lstrip().splitlines()[0] if segment["text"].strip() else ""
             section_start = bool(re.match(r"^(chapter|unit|module|\d+\.\d+)\s", heading, re.I))
-            if pending and (used + len(segment["text"]) > budget or (section_start and used > budget // 2)):
+            if pending and (len(pending) >= 24 or used + len(segment["text"]) > budget or (section_start and used > budget // 2)):
                 flush()
                 pending, used = [], 0
             pending.append(segment)
@@ -311,6 +311,8 @@ def validate_saved_scope(scope, docs):
             raise ValueError("Invalid scope page manifest in backup.")
         raw_records = []
         for r in result.get("records", []):
+            if not isinstance(r, dict) or not isinstance(r.get("segment_indexes"), list) or any(type(i) is not int or not 0 <= i < len(batch["segments"]) for i in r["segment_indexes"]):
+                raise ValueError("Invalid saved scope segment index.")
             raw = dict(r)
             raw["anchors"] = []
             for anchor in r.get("anchors", []):

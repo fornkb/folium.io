@@ -258,6 +258,11 @@ class Store:
                 allowed = {(old, p + 1) for old, d in original_docs.items()
                            for p in range(len(next(n[0]["pages"] for n in prepared if n[0]["id"] == id_map[old])))}
                 source_docs = [dict(d, id=old) for old in original_docs for d, _ in prepared if d["id"] == id_map[old]]
+                original_text = {(d["id"], i+1): " ".join(text.split()) for d in source_docs for i, text in enumerate(d["pages"])}
+                def validate_original_quotes(package):
+                    for section in package["sections"]:
+                        if section.get("provenance") == "source_excerpt" and not all(" ".join(section["body"].split()) in original_text[(ref["doc_id"],ref["page"])] for ref in section["sources"]):
+                            raise ValueError("A saved source quotation does not match the original PDF text.")
                 if original.get("scope"):
                     from scope import validate_saved_scope, review_outline, review_signature
                     validate_saved_scope(original["scope"], source_docs)
@@ -273,6 +278,7 @@ class Store:
                     pkg = old_module.get("package")
                     if pkg:
                         validate_package(pkg, allowed)
+                        validate_original_quotes(pkg)
                         if "topic_locations" in pkg:
                             validate_ranges(pkg["topic_locations"], source_docs)
                         module["package"] = pkg
@@ -285,6 +291,7 @@ class Store:
                             raise ValueError("Invalid unfinished lessons in backup.")
                         for part in preparation["lessons"].values():
                             validate_package(part, allowed)
+                            validate_original_quotes(part)
                             if "topic_locations" in part:
                                 validate_ranges(part["topic_locations"], source_docs)
                         module["preparation"] = preparation
@@ -411,7 +418,7 @@ def validate_package(pkg, allowed):
     for sec in pkg["sections"]:
         if not isinstance(sec,dict) or sec.get("kind") not in ("concept","example","formula","pitfall","recap"):
             raise ValueError("A lesson section has an invalid format.")
-        if not clean(sec.get("title")) or not clean(sec.get("body")):
+        if not isinstance(sec.get("title"), str) or not isinstance(sec.get("body"), str) or not clean(sec.get("title")) or not clean(sec.get("body")):
             raise ValueError("The generated lesson has an empty section.")
         if not isinstance(sec.get("sources", []), list):
             raise ValueError("Invalid lesson citation list.")
