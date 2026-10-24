@@ -223,7 +223,7 @@ def create_server(data_dir, port=8765, env_file=None):
                         store.extend(cid, body.get("modules", []))
                         return self.send(200, self.public(cid))
                     if action == "prepare":
-                        jobs.start(cid, body.get("action", "generate"))
+                        jobs.start(cid, body.get("action", "generate"), body.get("module_id"))
                         return self.send(202, self.public(cid))
                     if action == "outline":
                         if cid in jobs.active or any(m.get("package") or m.get("preparation") for m in course["modules"]):

@@ -11,9 +11,10 @@ import urllib.error
 import urllib.request
 from collections import Counter
 
-from core import clean, now, safe_text, validate_outline, validate_package
+from core import clean, now, safe_text, validate_outline, validate_package, validate_teaching, validate_assessment
 from configuration import Settings
-from prompts import VERSION, SYSTEM, OUTLINE_INSTRUCTIONS, PLAN_INSTRUCTIONS, LESSON_INSTRUCTIONS
+from prompts import (VERSION, SYSTEM, TEACHING_SYSTEM, OUTLINE_INSTRUCTIONS,
+                     PLAN_INSTRUCTIONS, LESSON_INSTRUCTIONS, ASSESSMENT_INSTRUCTIONS)
 from scope import (prepare_sources, validate_batch, catalogue, catalogue_record, validate_merge,
                    records_for, ranges_for, review_outline, review_signature, module_packet, coverage,
                    identity, merge_identity, CATALOGUE_CHARS)
@@ -73,6 +74,9 @@ SCOPED_PACKAGE = json.loads(json.dumps(PACKAGE))
 _section = SCOPED_PACKAGE["properties"]["sections"]["items"]
 _section["properties"]["provenance"] = {"type":"STRING", "enum":["generated", "source_excerpt"]}
 _section["required"].append("provenance")
+TEACHING = obj({key: PACKAGE["properties"][key] for key in ("overview", "objectives", "sections", "coverage_notes")})
+SCOPED_TEACHING = obj({key: SCOPED_PACKAGE["properties"][key] for key in ("overview", "objectives", "sections", "coverage_notes")})
+ASSESSMENT = obj({key: PACKAGE["properties"][key] for key in ("questions", "flashcards")})
 
 SCOPE_INSTRUCTIONS = """Identify teaching scope from ALL the supplied segments, not just headings.
 Return concise records (at most 24): title, subtopics, depth (definitions vs calculations,
@@ -101,7 +105,8 @@ class Gemini:
     def generate(self, prompt, schema, validator=lambda x: x, *, pdf=None, model=None):
         settings = self.settings.get()
         selected_model = model or settings["model"]
-        cache_identity = [VERSION, selected_model, SYSTEM, prompt, schema]
+        system = SYSTEM + ("\n\n" + TEACHING_SYSTEM if schema in (TEACHING, SCOPED_TEACHING) else "")
+        cache_identity = [VERSION, selected_model, system, prompt, schema]
         if pdf is not None:
             if not isinstance(pdf,bytes) or not pdf.startswith(b"%PDF-") or len(pdf)>8*1024*1024:
                 raise ValueError("The visual analysis PDF is invalid or oversized.")
@@ -114,8 +119,8 @@ class Gemini:
         if pdf is not None:
             parts.append(dict(inlineData=dict(mimeType="application/pdf",data=base64.b64encode(pdf).decode("ascii"))))
         payload = dict(contents=[dict(role="user", parts=parts)],
-                       systemInstruction=dict(parts=[dict(text=SYSTEM)]),
-                       generationConfig=dict(temperature=.3, maxOutputTokens=24000,
+                       systemInstruction=dict(parts=[dict(text=system)]),
+                       generationConfig=dict(maxOutputTokens=24000,
                                              responseMimeType="application/json", responseSchema=schema))
         with self.lock:
             time.sleep(max(0, settings["interval"] - (time.monotonic() - self.last_call)))
@@ -148,11 +153,11 @@ class Gemini:
                 raise ProviderError("Gemini could not be reached. Check your connection, then resume. Completed work is saved.") from None
         try:
             candidate = result["candidates"][0]
+            text = "".join(p.get("text", "") for p in candidate.get("content", {}).get("parts", []) if not p.get("thought"))
+            # Keep diagnostics even for truncated output; do not reuse it as valid content.
+            self.store.cache("raw:" + cache_key, dict(text=text, usage=result.get("usageMetadata", {}), finish_reason=candidate.get("finishReason")))
             if candidate.get("finishReason") not in (None, "STOP"):
-                raise ValueError("The response was interrupted or blocked.")
-            text = "".join(p.get("text", "") for p in candidate["content"]["parts"] if not p.get("thought"))
-            # Retain the successful response before validation; no credentials or request headers.
-            self.store.cache("raw:" + cache_key, dict(text=text, usage=result.get("usageMetadata", {})))
+                raise ValueError("Gemini's response was interrupted or blocked. Saved stages are safe; resume to retry this stage.")
             parsed = json.loads(text)
             value = validator(json.loads(text))
         except (KeyError, IndexError, json.JSONDecodeError) as exc:
@@ -273,6 +278,52 @@ def reviewed_notes(course, module):
     return "\nREVIEWED SOURCE CLARIFICATIONS (local audit; distinguish these from the original notes and flag the source conflict):\n" + json.dumps(notes) if notes else ""
 
 
+def continuity_context(course, module, preparation):
+    """Small extracts of saved teaching; no extra inference or invented memory."""
+    earlier = []
+    for lesson in preparation.get("plan", {}).get("lessons", []):
+        saved = preparation.get("lessons", {}).get(lesson["id"])
+        if not saved:
+            continue
+        earlier.append(dict(title=lesson["title"][:150], objectives=[o[:160] for o in saved["objectives"][:3]],
+            sections=[dict(title=s["title"][:150], opening=s["body"][:500]) for s in saved["sections"][:3]]))
+    prerequisites = [dict(title=m["title"][:150], overview=m["package"]["overview"][:600],
+                          objectives=[o[:160] for o in m["package"]["objectives"][:3]])
+                     for m in course["modules"] if m["id"] in module["prerequisites"] and m.get("package")]
+    context = dict(prerequisites=prerequisites[:3], earlier_lessons=earlier[-2:])
+    while len(json.dumps(context, ensure_ascii=False)) > 8000:
+        context["prerequisites" if context["prerequisites"] else "earlier_lessons"].pop(0)
+    return json.dumps(context, ensure_ascii=False)
+
+
+def assessment_units(module):
+    """Use complete saved lessons, never truncated teaching or source retrieval."""
+    package = module["package"]
+    lessons = package.get("teaching_plan", {}).get("lessons") or [dict(id="module", title=module["title"], topics=module["topics"])]
+    units = []
+    for lesson in lessons:
+        sections = [dict(title=s["title"], body=s["body"], kind=s["kind"])
+                    for s in package["sections"] if lesson["id"] == "module" or s.get("lesson_id") == lesson["id"]]
+        if not sections:
+            raise ValueError("Saved teaching is missing a planned lesson; practice cannot be prepared.")
+        teaching = dict(module=module["title"], lesson=lesson["title"], topics=lesson["topics"],
+                        overview=package["overview"], objectives=package["objectives"], sections=sections)
+        units.append(dict(id=lesson["id"], teaching=teaching,
+                          teaching_hash=hashlib.sha256(json.dumps(teaching, sort_keys=True, ensure_ascii=False).encode()).hexdigest()))
+    return units
+
+
+def validate_practice_preparation(module, preparation):
+    if not isinstance(preparation, dict) or not isinstance(preparation.get("lessons"), dict) or not isinstance(preparation.get("version"), str):
+        raise ValueError("Invalid unfinished practice in backup.")
+    units = {u["id"]: u for u in assessment_units(module)}
+    for lid, saved in preparation["lessons"].items():
+        if lid not in units or not isinstance(saved, dict) or saved.get("teaching_hash") != units[lid]["teaching_hash"]:
+            raise ValueError("Unfinished practice does not match its saved teaching.")
+        validate_assessment(saved, units[lid]["teaching"]["topics"])
+    return preparation
+
+
 def scope_document_coverage(course, docs):
     return [dict(doc_id=d["id"], module_ids=[m["id"] for m in course["modules"]
                 if any(r["doc_id"] == d["id"] for r in m.get("source_ranges", []))],
@@ -328,11 +379,11 @@ class Jobs:
                 c["job"].update(state="paused", message="Preparation was interrupted. Resume to continue saved work.")
                 store.save(c)
 
-    def start(self, course_id, action):
+    def start(self, course_id, action, module_id=None):
         course = self.store.course(course_id)
         if course.get("demo"):
             raise ValueError("The sample course is already prepared.")
-        if action not in ("inspect", "visual", "outline", "generate"):
+        if action not in ("inspect", "visual", "outline", "generate", "practice", "papers"):
             raise ValueError("Unknown preparation stage.")
         if action in ("inspect","visual") and (course["modules"] or course.get("scope")):
             raise ValueError("Source analysis is locked once scope preparation starts. Create a new course to analyze additional visual pages.")
@@ -342,6 +393,14 @@ class Jobs:
             raise ValueError("Upload course PDFs first.")
         if action == "generate" and not course["modules"]:
             raise ValueError("Prepare and review the outline first.")
+        if action == "practice":
+            targets = [m for m in course["modules"] if module_id is None or m["id"] == module_id]
+            if not targets or any(not m.get("package") for m in targets):
+                raise ValueError("Save the teaching for the selected modules before preparing practice.")
+            if all(m["package"].get("assessment_status") != "missing" for m in targets):
+                return course
+        if action == "papers" and (not course["modules"] or any(not m.get("package") for m in course["modules"])):
+            raise ValueError("Save course teaching before preparing past-paper questions.")
         if action == "generate" and course.get("scope"):
             signature = review_signature(course["modules"], course.get("scope_exclusions", []), course["scope"]["fingerprint"])
             if course.get("scope_review") != signature:
@@ -354,16 +413,18 @@ class Jobs:
             if course_id in self.active:
                 return course
             self.active.add(course_id)
-        self._status(course_id, "running", "lessons" if action == "generate" else action, "Preparing your course…")
-        threading.Thread(target=self._run, args=(course_id, action), daemon=True).start()
+        self._status(course_id, "running", "lessons" if action == "generate" else action, "Preparing your course…", action=action, module_id=module_id)
+        threading.Thread(target=self._run, args=(course_id, action, module_id), daemon=True).start()
         return self.store.course(course_id)
 
-    def _status(self, cid, state, stage, message, done=0, total=1):
+    def _status(self, cid, state, stage, message, done=0, total=1, **identity):
         def update(c):
-            c["job"] = dict(state=state, stage=stage, message=message, done=done, total=total, updated=now())
+            previous = c.get("job") or {}
+            c["job"] = dict(state=state, stage=stage, message=message, done=done, total=total, updated=now(),
+                            **{key: identity.get(key, previous.get(key)) for key in ("action", "module_id")})
         self.store.update(cid, update)
 
-    def _run(self, cid, action):
+    def _run(self, cid, action, module_id=None):
         try:
             if action == "inspect":
                 self._inspect(cid)
@@ -371,9 +432,13 @@ class Jobs:
                 self._visual(cid)
             elif action == "outline":
                 self._outline(cid)
+            elif action == "practice":
+                self._practice(cid, module_id)
+            elif action == "papers":
+                self._pyqs(cid, self.store.docs(cid))
             else:
                 self._packages(cid)
-            message={"inspect":"Visual page selection is ready to review.","visual":"Visual scope analysis is saved. Prepare the combined outline next.","outline":"Your outline is ready to review.","generate":"Your course is ready. Everything is saved locally."}[action]
+            message={"inspect":"Visual page selection is ready to review.","visual":"Visual scope analysis is saved. Prepare the combined outline next.","outline":"Your outline is ready to review.","generate":"Your teaching is ready. Prepare practice and cards separately when you want them.","practice":"Practice and revision cards are saved.","papers":"Uploaded past-paper questions are saved."}[action]
             self._status(cid, "complete", action, message, 1, 1)
         except (ProviderError, ValueError) as exc:
             current = self.store.course(cid).get("job") or {}
@@ -528,16 +593,27 @@ class Jobs:
         missing = sum(not m.get("package") for m in course["modules"])
         done = len(course["modules"]) - missing
         total = len(course["modules"])
-        for module in course["modules"]:
+        remaining, ordered, prerequisite_ids = list(course["modules"]), [], set()
+        while remaining:
+            ready = [m for m in remaining if set(m["prerequisites"]) <= prerequisite_ids]
+            if not ready:
+                raise ValueError("The course prerequisites cannot be ordered for teaching.")
+            for module in ready:
+                ordered.append(module)
+                prerequisite_ids.add(module["id"])
+                remaining.remove(module)
+        for module in ordered:
             if module.get("package"):
                 continue
+            course = self.store.course(cid)
             self._status(cid, "running", "planning", "Planning " + module["title"], done, total)
             scoped = bool(course.get("scope") and module.get("scope_ids"))
             packet = module_packet(course, module) if scoped else None
             pages = [] if scoped else source_pages(docs, module["title"] + " " + " ".join(module["topics"]))
             if not scoped and not pages:
                 raise ValueError("No readable learning material is available for this module.")
-            preparation = module.get("preparation") or dict(version=VERSION, lessons={})
+            preparation = module.get("preparation") or dict(version=VERSION, mode="teaching", lessons={})
+            teaching_only = preparation.get("mode") == "teaching"
             if not preparation.get("plan"):
                 prompt = PLAN_INSTRUCTIONS.format(module=module["title"], topics=json.dumps(module["topics"]), context=course_context(course)) + reviewed_notes(course,module) + "\n" + ("APPROVED SCOPE PACKET\n" + json.dumps(packet, ensure_ascii=False) if scoped else format_pages(pages))
                 preparation["plan"] = self.provider.generate(prompt, SCOPED_TEACHING_PLAN if scoped else TEACHING_PLAN,
@@ -556,13 +632,14 @@ class Jobs:
                 if scoped:
                     lesson_packet = module_packet(course, module, lesson["scope_ids"])
                     prompt += "\nAPPROVED SCOPE PACKET\n" + json.dumps(lesson_packet, ensure_ascii=False)
+                prompt += "\nSAVED EARLIER TEACHING (bounded extracts; may be incomplete)\n" + continuity_context(course, module, preparation)
+                if not teaching_only:
+                    # Preserve unfinished legacy jobs that already saved combined packages.
+                    prompt += "\nLegacy combined package: also return practice and cards using these rules.\n" + ASSESSMENT_INSTRUCTIONS
                 def validate(value):
-                    value = validate_package(value, allowed)
-                    if any(q.get("topic") not in lesson["topics"] for q in value["questions"]):
-                        raise ValueError("A practice question was not mapped to an assigned topic. Resume to retry this lesson.")
-                    for topic in lesson["topics"]:
-                        if not any(q["type"] == "objective" and q["topic"] == topic for q in value["questions"]):
-                            raise ValueError("A lesson is missing practice for a required topic. Resume to retry.")
+                    value = validate_teaching(value, allowed) if teaching_only else validate_package(value, allowed)
+                    if not teaching_only:
+                        validate_assessment(value, lesson["topics"])
                     if scoped:
                         for section in value["sections"]:
                             if section.get("provenance") not in ("generated", "source_excerpt"):
@@ -573,8 +650,12 @@ class Jobs:
                                 body = " ".join(section["body"].split())
                                 if not body or not section.get("sources") or not all(any(not p.get("recognized") and p["doc_id"] == ref["doc_id"] and p["page"] == ref["page"] and body in " ".join(p["text"].split()) for p in lesson_pages) for ref in section["sources"]):
                                     raise ValueError("A source excerpt must match the supplied original text exactly.")
+                    if teaching_only:
+                        return dict({key: value[key] for key in TEACHING["required"]}, diagrams=[], questions=[],
+                                    flashcards=[], assessment_status="missing", generation_version=VERSION)
                     return value
-                lesson_pkg = self.provider.generate(prompt, SCOPED_PACKAGE if scoped else PACKAGE, validate)
+                schema = (SCOPED_TEACHING if scoped else TEACHING) if teaching_only else (SCOPED_PACKAGE if scoped else PACKAGE)
+                lesson_pkg = self.provider.generate(prompt, schema, validate)
                 lesson_pkg["source_pages"] = [dict(doc_id=p["doc_id"], page=p["page"]) for p in lesson_pages]
                 if scoped:
                     lesson_pkg["topic_locations"] = lesson_packet["source_ranges"]
@@ -582,6 +663,8 @@ class Jobs:
                 preparation["lessons"][lesson["id"]] = lesson_pkg
                 self.store.update(cid, lambda c: next(m for m in c["modules"] if m["id"] == module["id"]).update(preparation=preparation))
             pkg = dict(overview=plan["overview"], objectives=plan["objectives"], teaching_plan=plan, sections=[], diagrams=[], questions=[], flashcards=[], source_pages=[], coverage_notes="", coverage_map=[], generation_version=VERSION)
+            if teaching_only:
+                pkg["assessment_status"] = "missing"
             if scoped:
                 pkg.update(teaching_mode="approved_scope", topic_locations=module["source_ranges"])
             gaps = []
@@ -608,8 +691,39 @@ class Jobs:
                 target.pop("preparation", None)
             self.store.update(cid, save)
             done += 1
-        self._pyqs(cid, docs)
         self.store.update(cid, lambda c: c.update(status="ready"))
+
+    def _practice(self, cid, module_id=None):
+        course = self.store.course(cid)
+        targets = [m for m in course["modules"] if (module_id is None or m["id"] == module_id)
+                   and m.get("package", {}).get("assessment_status") == "missing"]
+        for module in targets:
+            units = assessment_units(module)
+            preparation = module.get("practice_preparation") or dict(version=VERSION, lessons={})
+            validate_practice_preparation(module, preparation)
+            for index, unit in enumerate(units):
+                if unit["id"] in preparation["lessons"]:
+                    continue
+                self._status(cid, "running", "practice", f"{module['title']} · practice {index+1}/{len(units)}", index, len(units))
+                prompt = "SAVED TEACHING\n" + json.dumps(unit["teaching"], ensure_ascii=False) + "\n\n" + ASSESSMENT_INSTRUCTIONS
+                result = self.provider.generate(prompt, ASSESSMENT,
+                    lambda value: validate_assessment(value, unit["teaching"]["topics"]))
+                preparation["lessons"][unit["id"]] = dict(questions=result["questions"], flashcards=result["flashcards"],
+                                                        teaching_hash=unit["teaching_hash"], generation_version=VERSION)
+                def save_stage(c):
+                    next(m for m in c["modules"] if m["id"] == module["id"])["practice_preparation"] = preparation
+                self.store.update(cid, save_stage)
+            questions, cards = [], []
+            for unit in units:
+                part = preparation["lessons"][unit["id"]]
+                questions.extend(dict(q, lesson_id=unit["id"]) for q in part["questions"])
+                cards.extend(dict(card, lesson_id=unit["id"]) for card in part["flashcards"])
+            validate_assessment(dict(questions=questions, flashcards=cards), module["topics"])
+            def finish(c):
+                target = next(m for m in c["modules"] if m["id"] == module["id"])
+                target["package"].update(questions=questions, flashcards=cards, assessment_status="ready", assessment_version=VERSION)
+                target.pop("practice_preparation", None)
+            self.store.update(cid, finish)
 
     def _pyqs(self, cid, docs):
         course = self.store.course(cid)

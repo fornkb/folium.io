@@ -32,6 +32,8 @@ body.dark{--bg:#1e241f;--surface:#272e27;--sidebar:#202820;--ink:#e3e8dc;--muted
 .correction-note summary{cursor:pointer;font-weight:600}
 @media(min-width:651px){.lesson-toc{max-height:calc(100vh - 60px);overflow:auto}}
 .prose{overflow-x:auto}
+.preparation-panel{max-width:780px;margin:28px auto;padding:28px}.preparation-panel h2{font-family:var(--serif);font-size:28px}.preparation-panel p{line-height:1.7;margin:16px 0;color:var(--muted)}
+.question-stem{font-weight:550;margin:18px 0;font-size:16px}.question-stem>p:first-child,.option-content>p:first-child{margin-top:0}.question-stem>p:last-child,.option-content>p:last-child{margin-bottom:0}.option-content{min-width:0;width:100%}.option-content .katex-display{margin:.5em 0}.card-front{text-align:center;font-size:24px}.option .prose{font-size:inherit}
 .scope-review{padding:24px;margin-bottom:24px;overflow-wrap:anywhere}
 .scope-review summary,.scope-picker summary{cursor:pointer;padding:12px 0}
 .scope-record{border-top:1px solid var(--border,#ddd);padding:16px 0}

@@ -7,7 +7,8 @@ export function math(text, display=false){
   catch{return `<code class="math-fallback" title="View the original source for exact notation">${escapeText(text)}</code>`;}
 }
 
-export function inlineText(text){
+export function inlineText(text,depth=0){
+  if(depth>12)return escapeText(text);
   // Scan formatting tokens BEFORE escaping, and escape every ordinary text fragment.
   const tokens=/\\\(([\s\S]*?)\\\)|`([^`\n]+)`|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*/g;
   let out='',pos=0;
@@ -15,14 +16,15 @@ export function inlineText(text){
     out+=escapeText(String(text).slice(pos,match.index));
     if(match[1]!==undefined)out+=math(match[1]);
     else if(match[2]!==undefined)out+=`<code>${escapeText(match[2])}</code>`;
-    else if(match[3]!==undefined)out+=`<strong>${escapeText(match[3])}</strong>`;
-    else out+=`<em>${escapeText(match[4])}</em>`;
+    else if(match[3]!==undefined)out+=`<strong>${inlineText(match[3],depth+1)}</strong>`;
+    else out+=`<em>${inlineText(match[4],depth+1)}</em>`;
     pos=match.index+match[0].length;
   }
   return out+escapeText(String(text??'').slice(pos));
 }
 
-export function renderText(text){
+export function renderText(text,depth=0){
+  if(depth>12)return `<p>${escapeText(text)}</p>`;
   // Older saved lessons sometimes place an entire numbered derivation on one line.
   text=String(text||'').replace(/\r\n?/g,'\n').replace(/([^\n])\s+(Step \d+[:.])/g,'$1\n\n**$2**');
   const lines=text.split('\n');let out='',i=0;
@@ -59,11 +61,25 @@ export function renderText(text){
     if(bullet(line)){
       const ordered=/^\d/.test(line),tag=ordered?'ol':'ul',items=[];
       const start=ordered?Number(line.match(/^\d+/)[0]):1;
-      while(i<lines.length&&bullet(lines[i])&&/^\s*\d/.test(lines[i])===ordered){
-        items.push(lines[i++].replace(/^\s*(?:[-*•]|\d+[.)])\s+/,''));
-        while(i<lines.length&&/^\s{2,}\S/.test(lines[i])&&!bullet(lines[i]))items[items.length-1]+=' '+lines[i++].trim();
+      const indent=lines[i].match(/^\s*/)[0].length;
+      while(i<lines.length&&bullet(lines[i])&&lines[i].match(/^\s*/)[0].length===indent&&/^\s*\d/.test(lines[i])===ordered){
+        const marker=lines[i].match(/^\s*(?:[-*•]|\d+[.)])\s+/)[0].length;
+        const body=[lines[i++].slice(marker)];
+        while(i<lines.length){
+          if(!lines[i].trim()){
+            let next=i+1;while(next<lines.length&&!lines[next].trim())next++;
+            if(next<lines.length&&lines[next].match(/^\s*/)[0].length>indent){body.push('');i++;continue;}
+            break;
+          }
+          const spaces=lines[i].match(/^\s*/)[0].length;
+          if(spaces<=indent)break;
+          body.push(lines[i++].slice(Math.min(marker,spaces)));
+        }
+        let content=renderText(body.join('\n'),depth+1);
+        if(/^<p>(?:(?!<p>|<\/p>)[\s\S])*<\/p>$/.test(content))content=content.slice(3,-4);
+        items.push(content);
       }
-      out+=`<${tag}${ordered?` start="${start}"`:''}>${items.map(s=>`<li>${inlineText(s)}</li>`).join('')}</${tag}>`;continue;
+      out+=`<${tag}${ordered?` start="${start}"`:''}>${items.map(s=>`<li>${s}</li>`).join('')}</${tag}>`;continue;
     }
     if(line.startsWith('>')){out+=`<blockquote>${inlineText(line.replace(/^>\s?/,''))}</blockquote>`;i++;continue;}
     const paragraph=[line];i++;

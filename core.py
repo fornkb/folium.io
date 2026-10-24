@@ -310,6 +310,11 @@ class Store:
                             if "topic_locations" in part:
                                 validate_ranges(part["topic_locations"], source_docs)
                         module["preparation"] = preparation
+                    if "practice_preparation" in old_module:
+                        from generation import validate_practice_preparation
+                        if not pkg or pkg.get("assessment_status") != "missing":
+                            raise ValueError("Unfinished practice needs saved teaching awaiting practice.")
+                        module["practice_preparation"] = validate_practice_preparation(module, old_module["practice_preparation"])
                 module_ids = {m["id"] for m in modules}
                 for row in original.get("document_coverage", []):
                     if not isinstance(row,dict) or row.get("doc_id") not in original_docs or not isinstance(row.get("module_ids"),list) or any(mid not in module_ids for mid in row["module_ids"]):
@@ -418,7 +423,7 @@ def validate_outline(modules):
     return result
 
 
-def validate_package(pkg, allowed):
+def validate_teaching(pkg, allowed):
     if not isinstance(pkg, dict) or not clean(pkg.get("overview")):
         raise ValueError("The generated lesson is incomplete. Resume to retry this module.")
     if not isinstance(pkg.get("sections"), list) or len(pkg["sections"]) < 3:
@@ -446,10 +451,20 @@ def validate_package(pkg, allowed):
         for ref in sec.get("sources", []):
             if not isinstance(ref, dict) or type(ref.get("page")) is not int or (ref.get("doc_id"), ref.get("page")) not in allowed:
                 raise ValueError("A generated citation did not match a supplied source page. Resume to retry.")
+    if not isinstance(pkg.get("coverage_notes", ""), str):
+        raise ValueError("Invalid teaching coverage notes.")
+    return pkg
+
+
+def validate_assessment(pkg, topics=None):
+    if not isinstance(pkg, dict):
+        raise ValueError("The practice response is incomplete.")
     questions = pkg.get("questions", [])
     if not isinstance(questions, list) or not questions:
         raise ValueError("No practice questions were generated.")
     for i, q in enumerate(questions):
+        if not isinstance(q, dict):
+            raise ValueError("A generated practice question is incomplete.")
         q["id"] = f"q{i+1}"
         if q.get("type") not in ("objective", "subjective") or not clean(q.get("question")) or not clean(q.get("solution")):
             raise ValueError("A generated practice question is incomplete.")
@@ -460,14 +475,35 @@ def validate_package(pkg, allowed):
                 raise ValueError("A practice question has an invalid answer key.")
             if any(not isinstance(opt, str) or not opt.strip() for opt in opts) or len({" ".join(opt.lower().split()) for opt in opts}) != len(opts):
                 raise ValueError("Practice options must be distinct and nonempty.")
+        if topics is not None:
+            if q.get("topic") not in topics:
+                raise ValueError("A practice question was not mapped to an assigned topic.")
+            if q["type"] == "objective" and len(q["options"]) != 4:
+                raise ValueError("Each objective question needs four distinct options.")
+            if q["type"] == "subjective" and (q.get("options") != [] or q.get("correct_index") != -1):
+                raise ValueError("Written problems must use empty options and index -1.")
     if not any(q["type"] == "objective" for q in questions):
         raise ValueError("The question bank needs objective questions.")
+    if topics is not None and any(not any(q["type"] == "objective" and q["topic"] == topic for q in questions) for topic in topics):
+        raise ValueError("Practice is missing an assigned topic.")
     if not isinstance(pkg.get("flashcards"), list) or not pkg["flashcards"]:
         raise ValueError("No revision cards were generated.")
     for card in pkg["flashcards"]:
-        if not clean(card.get("front")) or not clean(card.get("back")):
+        if not isinstance(card, dict) or not clean(card.get("front")) or not clean(card.get("back")):
             raise ValueError("A revision card is incomplete.")
     return pkg
+
+
+def validate_package(pkg, allowed):
+    validate_teaching(pkg, allowed)
+    status = pkg.get("assessment_status")
+    if status not in (None, "missing", "ready"):
+        raise ValueError("Invalid practice preparation state.")
+    if status == "missing":
+        if pkg.get("questions") != [] or pkg.get("flashcards") != []:
+            raise ValueError("Unprepared practice must have empty question and card lists.")
+        return pkg
+    return validate_assessment(pkg)
 
 
 def bank_version(module):

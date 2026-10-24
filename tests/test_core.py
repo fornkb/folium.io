@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from app import create_server
 from core import Store, grade, module_state, review_card, validate_outline, validate_package
-from generation import Gemini, Jobs, ProviderError, Settings, source_pages, OUTLINE, TEACHING_PLAN, SCOPE_BATCH, SCOPED_TEACHING_PLAN
+from generation import Gemini, Jobs, ProviderError, Settings, source_pages, OUTLINE, TEACHING_PLAN, SCOPE_BATCH, SCOPED_TEACHING_PLAN, PYQ_SCHEMA
 from fixtures import TEST_MODULES, lesson_fixture, pdf_fixture, seed_test_course, scope_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -306,7 +306,7 @@ class HttpTests(unittest.TestCase):
         self.fail("The test preparation job did not finish.")
 
     def test_upload_outline_generate_study_end_to_end(self):
-        course=self.upload("Integration course",[("notes.pdf",pdf_fixture(),"material")])
+        course=self.upload("Integration course",[("notes.pdf",pdf_fixture(),"material"),("exam.pdf",pdf_fixture("exam"),"pyq")])
         cid=course["id"]
         doc=course["documents"][0]
         def generate(prompt,schema,validator):
@@ -318,6 +318,8 @@ class HttpTests(unittest.TestCase):
             if schema==SCOPED_TEACHING_PLAN:
                 ids=[r["id"] for r in json.loads(prompt.split("APPROVED SCOPE PACKET\n")[1])["records"]]
                 return validator(dict(overview="Overview",objectives=["Understand Big O"],lessons=[dict(id="l1",title="Complexity",topics=["Big O"],concepts=["Growth"],gaps=[],scope_ids=ids)]))
+            if schema==PYQ_SCHEMA:
+                return validator(dict(questions=[dict(question="Core concept",module_ids=["m1"],year="",number="",marks="",solution="Synthetic generated solution")]))
             package=lesson_fixture(TEST_MODULES[0],doc["id"],1)
             for section in package["sections"]:
                 section.update(provenance="generated", sources=[])
@@ -336,6 +338,28 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(4,provider.call_count)
             self.request(f"/api/courses/{cid}/prepare",dict(action="generate"))
             self.assertEqual(4,provider.call_count)
+            teaching=copy.deepcopy(course["modules"][0]["package"]["sections"])
+            self.assertEqual([],course["modules"][0]["package"]["questions"])
+            self.request(f"/api/courses/{cid}")
+            self.assertEqual(4,provider.call_count)
+            self.request(f"/api/courses/{cid}/prepare",dict(action="practice",module_id="m1"))
+            course=self.wait_job(cid)
+            self.assertEqual("complete",course["job"]["state"])
+            self.assertEqual("ready",course["modules"][0]["package"]["assessment_status"])
+            self.assertEqual(teaching,course["modules"][0]["package"]["sections"])
+            self.assertEqual(5,provider.call_count)
+            self.request(f"/api/courses/{cid}/prepare",dict(action="practice",module_id="m1"))
+            self.assertEqual(5,provider.call_count)
+            self.assertEqual([],course["pyqs"])
+            self.request(f"/api/courses/{cid}/prepare",dict(action="papers"))
+            course=self.wait_job(cid)
+            self.assertEqual("complete",course["job"]["state"])
+            self.assertEqual(1,len(course["pyqs"]))
+            self.assertTrue(course["pyqs"][0]["generated_solution"])
+            self.assertEqual(6,provider.call_count)
+            self.request(f"/api/courses/{cid}/prepare",dict(action="papers"))
+            self.wait_job(cid)
+            self.assertEqual(6,provider.call_count)
         text=self.request(f"/api/documents/{doc['id']}/pages/1")
         self.assertIn("Complexity",text["text"])
         with urllib.request.urlopen(self.url+f"/api/documents/{doc['id']}/pages/1.png") as response:

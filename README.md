@@ -6,8 +6,9 @@ A local-first study companion that turns your course PDFs into a connected cours
 
 - Review and edit an AI-proposed syllabus before preparing lessons.
 - Explore modules and prerequisites on a course map with zoom, pan, and progress indicators.
-- Study focused lessons with worked examples, simple flow diagrams, and offline mathematical typesetting.
+- Study focused lessons with worked examples and offline mathematical typesetting.
 - Open citations at the original PDF page, with both image and extracted-text views.
+- Prepare practice and revision cards separately from saved teaching, then study them offline.
 - Practise objective questions with instant scoring, or reveal solutions for subjective questions.
 - Keep personal notes, review spaced-repetition cards, and track recall separately from reading completion.
 - Export and import complete course backups, including the original PDFs and saved progress.
@@ -55,19 +56,23 @@ The server listens on `127.0.0.1` only. The default port is `8765`; `FOLIUM_PORT
 
 1. Create a course and upload PDFs, identifying each as a syllabus, learning material, or past paper.
 2. Inspect visual pages locally. Review the suggested scan/diagram selection and explicitly analyze it, or exclude it. Then prepare scope and outline; review topics, depth, conventions, unresolved pages, exclusions, prerequisites, and physical PDF source ranges.
-3. Start lesson preparation. Successful teaching plans and individual lessons are saved as they finish.
-4. Open a module from the course map to study, practise, view mapped past questions, or review cards.
+3. Start lesson preparation. Successful teaching plans and individual lessons are saved as they finish. The course becomes readable without preparing assessments or cards.
+4. Open a module to study. When wanted, explicitly choose **Generate practice & cards** from Practice or Flashcards. Uploaded past papers have their own explicit preparation action in Past papers.
 5. Export a course ZIP when you want a portable backup. Import it into another local installation to restore it.
 
 For new courses, preparation first processes all readable learning text into saved scope records. Batches are bounded to 24,000 text characters and 24 segments, prefer available section boundaries, split dense pages without dropping their tails, remove exact repeated boundary boilerplate, and share analysis of exact duplicate pages while retaining every physical location. Empty and damaged-text pages remain visibly unresolved. PYQs use a separate path.
 
 Scope records retain subtopics, expected depth, methods, conventions, uncertainty, physical locations, and optional exact source anchors. Large catalogues are merged in saved stages with explicit input-to-output lineage. The outline must assign every scope record to a module or give an exclusion reason. Source ranges are derived on the server and editable; they can span multiple PDFs. Review and save the outline before explicitly starting lessons, acknowledging unresolved pages where present. Per-module clarifications let you correct expected scope/depth without altering extracted text.
 
-Generation uses one teaching-plan request per unfinished module and one request per focused lesson (one to eight lessons per module). Plans use approved scope instead of repeating raw PDFs; each lesson receives its assigned scope records and up to 12,000 characters of selected original passages/anchors from approved module ranges. Retrieval excludes zero-match filler and can find text beyond the start of a page. Exact source anchors get priority. Every approved scope record must be assigned to a lesson. Oversized module packets ask you to split the module before starting generation. Past-paper mapping uses a request per readable paper page. Each lesson also supplies its practice questions and cards.
+Teaching uses one plan request per unfinished module and one request per focused lesson (one to eight lessons per module). Plans use approved scope instead of repeating raw PDFs; each lesson receives its assigned scope records and up to 12,000 characters of selected original passages/anchors from approved module ranges. Retrieval excludes zero-match filler and can find text beyond the start of a page. Exact source anchors get priority. Every approved scope record must be assigned to a lesson. Oversized module packets ask you to split the module before starting generation.
+
+New teaching requests contain only explanations, worked examples, learning objectives, and coverage notes. The short teaching prompt asks for approachable language, detailed central reasoning, useful concrete examples, and course-appropriate scope and notation. Bounded extracts of earlier saved lessons and available prerequisite teaching provide continuity; these extracts are incomplete context, not a guarantee of consistent notation. No diagrams are requested in the new teaching schema. Previously saved diagrams remain readable.
+
+Practice and cards are optional and use a separate prompt and schema: one request per saved lesson, with its complete teaching text as input. They are generated together in that later stage, with no additional PDF retrieval or teaching regeneration. Successful practice batches are saved independently; a pause, restart, or course backup/import resumes only unfinished lessons. Each batch is tied to the saved teaching by a content hash. Structural validation enforces four distinct objective options, valid answer keys, and coverage of assigned topics; it does not establish answer correctness. Uploaded-paper mapping is also separate, using a request per readable paper page.
 
 This initial scope pass may require more requests than the former sampled outline. Total savings depend on course size, repeated lesson context, output length, and provider quotas. No cost or completeness guarantee is made. Successful raw provider responses and available usage metadata are cached locally before validation; validated batches, merges, plans, and lessons resume independently. Backups preserve scope stages, source mappings, review state, and unfinished generation.
 
-If preparation pauses because of a quota, connection failure, or restart, resume it explicitly. Completed stages are reused. Existing saved lessons are preserved when prompts change; improved prompts apply to newly generated content. Reading, navigation, quizzes, solution reveals, notes, and card reviews make **no AI requests**.
+If preparation pauses because of a quota, connection failure, or restart, resume it explicitly. Completed stages are reused. Existing saved lessons are preserved when prompts change; improved prompts apply to newly generated content. Unfinished legacy jobs retain their combined-package schema and reuse their completed lessons. Reading, navigation, quizzes, solution reveals, notes, and card reviews make **no AI requests**.
 
 ## Data and privacy
 
@@ -127,6 +132,20 @@ Run reader checks with Node.js installed; no npm dependencies are required:
 ```powershell
 node tests/test_reader.mjs
 ```
+
+### Teaching prompt evaluation
+
+Export a small synthetic comparison suite without reading personal courses, loading keys, or making provider requests:
+
+```powershell
+python tools/teaching_evaluation.py --output tmp/teaching-evaluation.json
+```
+
+The five cases cover a derivation, a conceptual explanation, a procedure, sparse notes, and an ambiguous convention. The export contains the current prompt, schema, expected features, and a human scoring rubric. Record the selected model, prompt version, token/request counts, failures, and human judgments when testing variants. Review the rendered lessons as well as their text. Automated persistence and formatting checks do not establish teaching quality; no real-model comparison or reduction in error rate has yet been measured for this change.
+
+The provider leaves sampling parameters at the model defaults, following Google's current guidance. Raw output, available usage metadata, and finish reasons are retained for interrupted responses, but truncated text is never accepted as a complete lesson or silently repaired.
+
+The prompt design follows Google's [clear instructions and task decomposition guidance](https://ai.google.dev/gemini-api/docs/prompting-strategies) and [sequential prompting guidance](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/prompts/break-down-prompts). Concrete examples and worked explanations are informed by the IES [instruction and study practice guide](https://ies.ed.gov/ncee/wwc/PracticeGuide/1). These sources motivate the design; they do not validate a particular generated lesson.
 
 ## Third-party attribution
 
