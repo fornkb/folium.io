@@ -80,6 +80,8 @@ If preparation pauses because of a quota, connection failure, or restart, resume
 
 By default, SQLite records, uploaded PDFs, provider-response caches, settings, and backups live under `data/`. They are excluded from Git, along with `.env`, local demo assets, temporary output, and development notes. Only the root README is tracked as Markdown. Tests generate small synthetic documents at runtime and need no sample PDFs or API key.
 
+Notes, reading flags, bookmarks, attempts, and card schedules are stored in separate per-module study rows. Normal study actions do not rewrite saved lesson/scope JSON and return only a small state update. Older databases remain readable: embedded study state is overlaid with newer study rows, and backups export the combined current state. The library uses a persisted compact course index (including saved cards for offline revision), and full teaching loads when opening a course. Job polling uses compact status responses and fetches full content when saved artifacts or completion state change. PDF page counts and text-availability counts are stored separately, with an index on document course ownership.
+
 Text extraction, local visual inspection and PDF previews run on your computer. Explicit visual analysis sends only selected derived page images and bounded surrounding text to Gemini. Preparing the outline sends usable learning text in bounded scope batches, followed by scope records and selected excerpts for planning and teaching. Course ZIPs include your uploaded materials, recognition and notes, but exclude API credentials; share them only with intended recipients.
 
 ## Limitations
@@ -133,7 +135,10 @@ Run reader checks with Node.js installed; no npm dependencies are required:
 
 ```powershell
 node tests/test_reader.mjs
+node tests/test_notes.mjs
 ```
+
+The notes regression controls network completion order to check that a slower earlier save cannot overwrite a newer edit. Reader checks include mathematics late in long wrapped paragraphs. Original paper extraction and answer-option validation preserve case-sensitive notation such as `A` versus `a`; textual distinctness does not establish that options are mathematically inequivalent.
 
 ### Teaching prompt evaluation
 

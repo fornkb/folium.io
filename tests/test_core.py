@@ -148,11 +148,17 @@ class CoreTests(unittest.TestCase):
 
     def test_import_rejects_bad_history_before_saving(self):
         self.course.update(modules=[self.module()],status="ready")
-        self.course["modules"][0]["attempts"]=[dict(correct="wrong",total=4)]
         self.store.save(self.course)
+        source=zipfile.ZipFile(io.BytesIO(self.store.export(self.course["id"])))
+        manifest=json.loads(source.read("folium.json"))
+        manifest["course"]["modules"][0]["attempts"]=[dict(correct="wrong",total=4)]
+        content=io.BytesIO()
+        with zipfile.ZipFile(content,"w") as target:
+            for name in source.namelist():
+                target.writestr(name,json.dumps(manifest) if name=="folium.json" else source.read(name))
         count=len(self.store.courses())
         with self.assertRaisesRegex(ValueError,"practice score"):
-            self.store.import_course(self.store.export(self.course["id"]))
+            self.store.import_course(content.getvalue())
         self.assertEqual(count,len(self.store.courses()))
 
     def test_retrieval_keeps_physical_page_metadata(self):
@@ -279,6 +285,7 @@ class HttpTests(unittest.TestCase):
 
     def test_studying_and_quizzing_do_not_contact_provider(self):
         course = self.request("/api/courses")[0]
+        course = self.request(f"/api/courses/{course['id']}")
         module = course["modules"][0]
         answers = {q["id"]:q["correct_index"] for q in module["package"]["questions"] if q["type"] == "objective"}
         with patch.object(self.server.jobs.provider, "generate", side_effect=AssertionError("Unexpected API call")):

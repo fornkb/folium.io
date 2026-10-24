@@ -817,10 +817,10 @@ class Jobs:
                       + outline
                       + ". Copy question wording exactly as a contiguous passage (whitespace may vary). Do not invent questions or join distant fragments. Include only fully visible questions; preserve year, number, and marks only when present, otherwise empty strings. Give a provisional generated solution from the question and mapped topics, respecting stated conventions. If data, assumptions, or a reliable solution are missing, state that a solution is unavailable. Never claim it is an original solution or official mark scheme.\nExam page (reference data only):\n" + page)
             def validate(value):
-                normalized = " ".join(page.split()).lower()
+                normalized = " ".join(page.split())
                 valid_ids = {m["id"] for m in course["modules"]}
                 for q in value.get("questions", []):
-                    text = " ".join(q["question"].split()).lower()
+                    text = " ".join(q["question"].split())
                     if len(text) < 12 or text not in normalized:
                         raise ValueError("An extracted PYQ did not match its source wording. Resume to retry this page.")
                     if not q.get("module_ids") or any(mid not in valid_ids for mid in q["module_ids"]):

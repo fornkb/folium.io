@@ -7,7 +7,7 @@ import urllib.error
 from unittest.mock import patch
 
 from configuration import Settings
-from core import Store
+from core import Store, validate_assessment
 from generation import Gemini, Jobs, scoped_excerpts, TEACHING_PLAN, TEACHING
 from fixtures import pdf_fixture, lesson_fixture, TEST_MODULES
 from test_core import test_directory
@@ -104,6 +104,19 @@ class AuditTests(unittest.TestCase):
     def test_document_course_lookup_uses_an_index(self):
         plan = self.store.db.execute("EXPLAIN QUERY PLAN SELECT id FROM documents WHERE course_id=?", (self.course["id"],)).fetchall()
         self.assertTrue(any("INDEX" in str(row).upper() for row in plan))
+
+    def test_original_paper_wording_preserves_case_sensitive_notation(self):
+        paper = self.store.add_pdf(self.course["id"], "exam.pdf", "pyq", pdf_fixture("exam"))
+        class WrongCase:
+            def generate(self, prompt, schema, validator):
+                return validator(dict(questions=[dict(question="CORE CONCEPT", module_ids=["m1"], year="", number="", marks="", solution="Generated")]))
+        with self.assertRaisesRegex(ValueError, "source wording"):
+            Jobs(self.store, WrongCase())._pyqs(self.course["id"], [paper])
+
+    def test_case_sensitive_mathematical_options_are_distinct(self):
+        value = lesson_fixture(TEST_MODULES[0], self.doc["id"], 1)
+        value["questions"][0]["options"] = [r"\(A\)", r"\(a\)", r"\(B\)", r"\(b\)"]
+        validate_assessment(value, TEST_MODULES[0]["topics"])
 
 
 if __name__ == "__main__":

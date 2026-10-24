@@ -15,6 +15,7 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
+STUDY_FIELDS = ("read", "bookmarked", "notes", "attempts", "question_evidence")
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -48,17 +49,23 @@ class Store:
               name TEXT, role TEXT, pages TEXT, digest TEXT);
             CREATE TABLE IF NOT EXISTS cache(key TEXT PRIMARY KEY, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS documents_by_course ON documents(course_id);
+            CREATE TABLE IF NOT EXISTS study_state(course_id TEXT NOT NULL, module_id TEXT NOT NULL,
+              updated TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(course_id,module_id));
+            CREATE TABLE IF NOT EXISTS course_summaries(id TEXT PRIMARY KEY, updated TEXT NOT NULL, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS document_stats(doc_id TEXT PRIMARY KEY, page_count INTEGER NOT NULL,
+              readable_pages INTEGER NOT NULL, text_warning_pages INTEGER NOT NULL);
         """)
         self.db.commit()
         self._repair_extraction()
 
     def _repair_extraction(self):
-        changes = []
+        changes, stats = [], []
         for doc_id, raw in self.db.execute("SELECT id,pages FROM documents"):
             pages = json.loads(raw)
             repaired = [safe_text(p) for p in pages]
             if pages != repaired:
                 changes.append((json.dumps(repaired), doc_id))
+            stats.append((doc_id, len(repaired), sum(bool(p.strip()) for p in repaired), sum("\ufffd" in p for p in repaired)))
         if changes:
             folder = self.root / "backups"
             folder.mkdir(exist_ok=True)
@@ -68,6 +75,77 @@ class Store:
             backup.close()
             with self.db:
                 self.db.executemany("UPDATE documents SET pages=? WHERE id=?", changes)
+        # Small metadata rows avoid decoding every PDF's text for library/detail views.
+        with self.db:
+            self.db.executemany("INSERT INTO document_stats VALUES (?,?,?,?) ON CONFLICT(doc_id) DO UPDATE SET "
+                "page_count=excluded.page_count,readable_pages=excluded.readable_pages,text_warning_pages=excluded.text_warning_pages "
+                "WHERE page_count!=excluded.page_count OR readable_pages!=excluded.readable_pages OR text_warning_pages!=excluded.text_warning_pages", stats)
+
+    def _save_doc_stats(self, doc_id, pages):
+        self.db.execute("INSERT OR REPLACE INTO document_stats VALUES (?,?,?,?)",
+                        (doc_id, len(pages), sum(bool(p.strip()) for p in pages), sum("\ufffd" in p for p in pages)))
+
+    def document_metadata(self, course_id):
+        with self.lock:
+            rows = self.db.execute("SELECT d.id,d.name,d.role,s.page_count,s.readable_pages,s.text_warning_pages "
+                "FROM documents d LEFT JOIN document_stats s ON s.doc_id=d.id WHERE d.course_id=? ORDER BY d.rowid", (course_id,)).fetchall()
+        return [dict(zip(("id", "name", "role", "page_count", "readable_pages", "text_warning_pages"), row)) for row in rows]
+
+    def _write_study(self, course, only_module=None):
+        for module in course["modules"]:
+            if only_module is not None and module["id"] != only_module:
+                continue
+            data = {key: module[key] for key in STUDY_FIELDS if key in module}
+            data["reviews"] = {key: value for key, value in course.get("reviews", {}).items() if key.startswith(module["id"] + ":")}
+            self.db.execute("INSERT INTO study_state VALUES (?,?,?,?) ON CONFLICT(course_id,module_id) "
+                "DO UPDATE SET updated=excluded.updated,data=excluded.data WHERE data!=excluded.data",
+                (course["id"], module["id"], course["updated"], json.dumps(data, ensure_ascii=False)))
+
+    def _hydrate_study(self, course):
+        modules = {m["id"]: m for m in course["modules"]}
+        for mid, updated, raw in self.db.execute("SELECT module_id,updated,data FROM study_state WHERE course_id=?", (course["id"],)):
+            if mid not in modules:
+                continue
+            data = json.loads(raw)
+            for key in STUDY_FIELDS:
+                modules[mid].pop(key, None)
+            modules[mid].update({key: data[key] for key in STUDY_FIELDS if key in data})
+            course["reviews"] = {key: value for key, value in course.get("reviews", {}).items() if not key.startswith(mid + ":")}
+            course["reviews"].update(data.get("reviews", {}))
+            course["updated"] = max(course["updated"], updated)
+        return course
+
+    def _write_summary(self, course):
+        summary = {key: course[key] for key in ("id", "title", "description", "status", "created", "updated", "demo", "job")}
+        summary.update(summary=True, documents=self.document_metadata(course["id"]), reviews=course.get("reviews", {}), modules=[])
+        for module in course["modules"]:
+            row = {key: module[key] for key in ("id", "title", "description", "topics", "prerequisites", "read", "bookmarked") if key in module}
+            row.update(state=module_state(module), evidence=assessment_evidence(module))
+            if module.get("package"):
+                row["package"] = dict(flashcards=module["package"].get("flashcards", []),
+                                      assessment_status=module["package"].get("assessment_status"))
+            summary["modules"].append(row)
+        self.db.execute("INSERT OR REPLACE INTO course_summaries VALUES (?,?,?)", (course["id"], course["updated"], json.dumps(summary, ensure_ascii=False)))
+        return summary
+
+    def summaries(self):
+        with self.lock, self.db:
+            missing = self.db.execute("SELECT c.data FROM courses c LEFT JOIN course_summaries s ON s.id=c.id WHERE s.id IS NULL").fetchall()
+            for row in missing:
+                self._write_summary(self._hydrate_study(json.loads(row[0])))
+            return [json.loads(row[0]) for row in self.db.execute("SELECT s.data FROM course_summaries s JOIN courses c ON c.id=s.id ORDER BY s.updated DESC,s.id")]
+
+    def summary(self, course_id):
+        with self.lock, self.db:
+            row = self.db.execute("SELECT s.data FROM course_summaries s JOIN courses c ON c.id=s.id WHERE s.id=?", (course_id,)).fetchone()
+            return json.loads(row[0]) if row else self._write_summary(self.course(course_id))
+
+    def study_patch(self, course, module_id):
+        module = next(m for m in course["modules"] if m["id"] == module_id)
+        row = {key: module[key] for key in STUDY_FIELDS if key in module}
+        row.update(id=module_id, state=module_state(module), evidence=assessment_evidence(module))
+        return dict(id=course["id"], updated=course["updated"], study_patch=True, modules=[row],
+                    reviews={key: value for key, value in course.get("reviews", {}).items() if key.startswith(module_id+":")})
 
     def close(self):
         self.db.close()
@@ -83,27 +161,35 @@ class Store:
     def save(self, course):
         with self.lock, self.db:
             course["updated"] = now()
+            self._write_study(course)
+            saved = dict(course, reviews={}, modules=[{key: value for key, value in module.items() if key not in STUDY_FIELDS} for module in course["modules"]])
             self.db.execute("INSERT OR REPLACE INTO courses VALUES (?,?)",
-                            (course["id"], json.dumps(course, ensure_ascii=False)))
+                            (course["id"], json.dumps(saved, ensure_ascii=False)))
+            self._write_summary(course)
 
     def course(self, course_id):
         with self.lock:
             row = self.db.execute("SELECT data FROM courses WHERE id=?", (course_id,)).fetchone()
-        if not row:
-            raise ValueError("Course not found.")
-        return json.loads(row[0])
+            if not row:
+                raise ValueError("Course not found.")
+            return self._hydrate_study(json.loads(row[0]))
 
-    def update(self, course_id, mutate):
-        with self.lock:
+    def update(self, course_id, mutate, *, study_module=None):
+        with self.lock, self.db:
             course = self.course(course_id)
             result = mutate(course)
-            self.save(course)
+            if study_module is None:
+                self.save(course)
+            else:
+                course["updated"] = now()
+                self._write_study(course, study_module)
+                self._write_summary(course)
             return result if result is not None else course
 
     def courses(self):
         with self.lock:
             rows = self.db.execute("SELECT data FROM courses ORDER BY rowid DESC").fetchall()
-        return [json.loads(row[0]) for row in rows]
+            return [self._hydrate_study(json.loads(row[0])) for row in rows]
 
     def docs(self, course_id):
         with self.lock:
@@ -113,12 +199,8 @@ class Store:
 
     def public(self, course_id):
         course = self.course(course_id)
-        course["documents"] = [dict(id=d["id"], name=d["name"], role=d["role"],
-                                   page_count=len(d["pages"]),
-                                   text_warning_pages=sum("\ufffd" in p for p in d["pages"]),
-                                   annotations=[n for n in course.get("source_annotations", []) if n["doc_id"] == d["id"]],
-                                   readable_pages=sum(bool(p.strip()) for p in d["pages"]))
-                               for d in self.docs(course_id)]
+        course["documents"] = [dict(d, annotations=[n for n in course.get("source_annotations", []) if n["doc_id"] == d["id"]])
+                               for d in self.document_metadata(course_id)]
         if course.get("scope"):
             from scope import coverage, records_for
             course["scope_coverage"] = coverage(course["scope"])
@@ -142,9 +224,10 @@ class Store:
         if not content.startswith(b"%PDF-") or len(content) > 25 * 1024 * 1024:
             raise ValueError("Upload a valid PDF smaller than 25 MB.")
         digest = hashlib.sha256(content).hexdigest()
-        for doc in self.docs(course_id):
-            if doc["digest"] == digest:
-                return doc
+        with self.lock:
+            row = self.db.execute("SELECT id,name,role,pages,digest FROM documents WHERE course_id=? AND digest=?", (course_id, digest)).fetchone()
+        if row:
+            return dict(id=row[0], name=row[1], role=row[2], pages=json.loads(row[3]), digest=row[4])
         try:
             reader = PdfReader(io.BytesIO(content))
             if reader.is_encrypted and not reader.decrypt(""):
@@ -170,6 +253,8 @@ class Store:
             self.db.execute("INSERT INTO documents VALUES (?,?,?,?,?,?)",
                             (doc["id"], course_id, doc["name"], doc["role"],
                              json.dumps(doc["pages"]), doc["digest"]))
+            self._save_doc_stats(doc["id"], doc["pages"])
+            self._write_summary(self.course(course_id))
 
     def document(self, doc_id):
         with self.lock:
@@ -477,7 +562,7 @@ def validate_assessment(pkg, topics=None):
             answer = q.get("correct_index")
             if not isinstance(opts, list) or not 2 <= len(opts) <= 6 or type(answer) is not int or not 0 <= answer < len(opts):
                 raise ValueError("A practice question has an invalid answer key.")
-            if any(not isinstance(opt, str) or not opt.strip() for opt in opts) or len({" ".join(opt.lower().split()) for opt in opts}) != len(opts):
+            if any(not isinstance(opt, str) or not opt.strip() for opt in opts) or len({" ".join(opt.split()) for opt in opts}) != len(opts):
                 raise ValueError("Practice options must be distinct and nonempty.")
         if topics is not None:
             if q.get("topic") not in topics:

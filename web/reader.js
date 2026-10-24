@@ -84,7 +84,7 @@ export function renderText(text,depth=0){
     if(line.startsWith('>')){out+=`<blockquote>${inlineText(line.replace(/^>\s?/,''))}</blockquote>`;i++;continue;}
     const paragraph=[line];i++;
     while(i<lines.length&&lines[i].trim()&&!special(lines[i])&&!(lines[i].includes('|')&&i+1<lines.length&&/---/.test(lines[i+1])))paragraph.push(lines[i++].trim());
-    out+=`<p>${paragraph.map(inlineText).join(' ')}</p>`;
+    out+=`<p>${paragraph.map(s=>inlineText(s)).join(' ')}</p>`;
   }
   return out;
 }

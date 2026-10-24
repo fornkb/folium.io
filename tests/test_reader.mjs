@@ -29,6 +29,7 @@ const mathPractice=practice({demo:false},{...module,package:{questions:[mathQues
 assert.equal((mathPractice.match(/katex-display/g)||[]).length,2);
 assert.match(renderText('1. Apply the method\n   - Identify assumptions\n   - Substitute values\n     \\[x=2\\]'),/<ol[\s\S]*<ul>[\s\S]*katex-display/);
 assert.match(inlineText('**Energy \\(E\\)**'),/<strong>Energy <span class="katex"/);
+assert.match(renderText(Array.from({length:16},(_,i)=>i===15?'Finally \\(x=2\\).':'A continued paragraph line.').join('\n')),/class="katex"/);
 const missingPractice=practice({job:null},{package:{assessment_status:'missing'}},{});
 assert.match(missingPractice,/data-action="generate-practice"/);
 assert.doesNotMatch(missingPractice,/data-action="submit-quiz"/);

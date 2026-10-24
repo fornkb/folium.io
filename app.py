@@ -107,7 +107,10 @@ def create_server(data_dir, port=8765, env_file=None):
                     if path == "/api/settings":
                         return self.send(200, settings.public())
                     if path == "/api/courses":
-                        return self.send(200, [self.public(c["id"]) for c in store.courses()])
+                        return self.send(200, store.summaries())
+                    match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/status", path)
+                    if match:
+                        return self.send(200, store.summary(match[1]))
                     match = re.fullmatch(r"/api/courses/([a-f0-9]{16})(/export)?", path)
                     if match:
                         cid = match[1]
@@ -194,8 +197,11 @@ def create_server(data_dir, port=8765, env_file=None):
                         with store.lock, store.db:
                             for d in store.docs(course["id"]):
                                 (store.root / "documents" / (d["id"] + ".pdf")).unlink(missing_ok=True)
+                                store.db.execute("DELETE FROM document_stats WHERE doc_id=?", (d["id"],))
                             store.db.execute("DELETE FROM documents WHERE course_id=?", (course["id"],))
                             store.db.execute("DELETE FROM courses WHERE id=?", (course["id"],))
+                            store.db.execute("DELETE FROM study_state WHERE course_id=?", (course["id"],))
+                            store.db.execute("DELETE FROM course_summaries WHERE id=?", (course["id"],))
                         raise
                     warnings = []
                     for d in store.docs(course["id"]):
@@ -259,8 +265,8 @@ def create_server(data_dir, port=8765, env_file=None):
                             result.update(grade(module, body.get("answers", {}), body.get("question_ids")))
                         elif subaction == "review":
                             result.update(review_card(c, mid, int(body.get("index", -1)), body.get("rating")))
-                    store.update(cid, mutate)
-                    return self.send(200, dict(course=self.public(cid), result=result))
+                    updated = store.update(cid, mutate, study_module=mid)
+                    return self.send(200, dict(course=store.study_patch(updated, mid), result=result))
                 self.send(404, dict(error="This action could not be found."))
             except PermissionError as exc:
                 self.send(403, dict(error=str(exc)))

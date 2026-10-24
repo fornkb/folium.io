@@ -5,7 +5,7 @@ const $$=(s,root=document)=>[...root.querySelectorAll(s)];
 const state={courses:[],settings:{has_key:false,model:'gemini-3.8-flash',interval:6},view:'graph',zoom:null,
   files:[],draft:[],draftCid:null,scopeExclusions:[],scopeGapsAccepted:false,review:null,quizzes:{},theme:localStorage.getItem('folium-theme')||'light',
   current:{},allowPrepared:null,previousRoute:'',notesPending:null};
-let toastTimer,notesTimer,lastFocus;
+let toastTimer,notesTimer,lastFocus,notesFlight=null;
 
 async function api(path,body){
   const options=body===undefined?{}:body instanceof FormData?{method:'POST',body}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
@@ -15,7 +15,22 @@ async function api(path,body){
   if(!response.ok)throw new Error(value.error||'Something could not be saved. Please try again.');
   return value;
 }
-function updateCourse(c){const index=state.courses.findIndex(x=>x.id===c.id);if(index<0)state.courses.unshift(c);else state.courses[index]=c;}
+function updateCourse(c){
+  const index=state.courses.findIndex(x=>x.id===c.id);
+  if(c.study_patch){
+    const current=state.courses[index];if(!current)return;
+    for(const patch of c.modules){const target=current.modules.find(m=>m.id===patch.id);if(target)Object.assign(target,patch);}
+    current.updated=c.updated;current.reviews={...current.reviews,...c.reviews};c=current;
+  }else if(index<0)state.courses.unshift(c);else state.courses[index]=c;
+  const pending=state.notesPending||state.notesSaving;
+  if(pending?.cid===c.id){const module=c.modules.find(m=>m.id===pending.mid);if(module)module.notes=pending.text;}
+  return c;
+}
+async function loadRouteCourse(){
+  const r=route();if(r[0]!=='course')return;
+  const c=state.courses.find(c=>c.id===r[1]);
+  if(c?.summary){render();updateCourse(await api('/courses/'+c.id));}
+}
 function toast(text,error=false){const el=$('#toast');clearTimeout(toastTimer);el.textContent=text;el.className='visible'+(error?' error':'');toastTimer=setTimeout(()=>el.className='',error?6500:3400);}
 function route(){return (location.hash.replace(/^#\/?/,'')||'').split('/').map(decodeURIComponent);}
 function goto(path){if(location.hash===path){render();window.scrollTo(0,0);}else location.hash=path;}
@@ -51,6 +66,7 @@ function render(){
   else if(r[0]==='course'){
     const c=state.courses.find(x=>x.id===r[1]);cid=c?.id;
     if(!c){body=UI.empty('This course isn’t here.','Return to your library or import a saved course package.','book','<a class="btn primary" href="#/">My courses '+icon('arrow')+'</a>');}
+    else if(c.summary){title=c.title;body=UI.empty('Opening your saved course…','Loading its lessons from this computer.','clock');}
     else{
       title=c.title;state.current.c=c;
       if(r[2]==='module'){
@@ -194,10 +210,16 @@ function startReview(cid=null){
   state.review={key:'daily',cards,pos:0,flipped:false};goto('#/revision/review');
 }
 async function flushNotes(){
-  clearTimeout(notesTimer);if(!state.notesPending)return;
-  const pending=state.notesPending;state.notesPending=null;
-  try{const value=await api(`/courses/${pending.cid}/modules/${enc(pending.mid)}/progress`,{notes:pending.text});updateCourse(value.course);if($('#notes-status'))$('#notes-status').textContent='Saved on this computer';}
-  catch(error){state.notesPending=pending;if($('#notes-status'))$('#notes-status').textContent='Not saved — try Save notes';throw error;}
+  clearTimeout(notesTimer);
+  if(notesFlight){await notesFlight;return flushNotes();}
+  if(!state.notesPending)return;
+  const pending=state.notesPending;state.notesPending=null;state.notesSaving=pending;
+  notesFlight=(async()=>{
+    try{const value=await api(`/courses/${pending.cid}/modules/${enc(pending.mid)}/progress`,{notes:pending.text});updateCourse(value.course);if($('#notes-status'))$('#notes-status').textContent=state.notesPending?'Saving…':'Saved on this computer';}
+    catch(error){if(!state.notesPending)state.notesPending=pending;if($('#notes-status'))$('#notes-status').textContent='Not saved — try Save notes';throw error;}
+  })();
+  try{await notesFlight;}finally{notesFlight=null;state.notesSaving=null;}
+  if(state.notesPending)return flushNotes();
 }
 
 document.addEventListener('click',async event=>{
@@ -227,8 +249,8 @@ document.addEventListener('click',async event=>{
       state.zoom=action==='zoom-fit'?null:Math.min(2,Math.max(.2,current+(action==='zoom-in'?.15:-.15)));applyGraphZoom();
       if(action==='zoom-fit'){$('.graph-scroll').scrollLeft=0;$('.graph-scroll').scrollTop=0;}
     }
-    if(action==='bookmark'){await flushNotes();await progress({bookmarked:!m.bookmarked});const y=scrollY;render();scrollTo(0,y);toast(m.bookmarked?'Removed from saved modules.':'Saved for another look.');}
-    if(action==='mark-read'){await flushNotes();await progress({read:!m.read});const y=scrollY;render();scrollTo(0,y);toast(m.read?'Marked as not yet studied.':'A little more understanding. Progress saved.');}
+    if(action==='bookmark'){await flushNotes();const bookmarked=!m.bookmarked;await progress({bookmarked});const y=scrollY;render();scrollTo(0,y);toast(bookmarked?'Saved for another look.':'Removed from saved modules.');}
+    if(action==='mark-read'){await flushNotes();const read=!m.read;await progress({read});const y=scrollY;render();scrollTo(0,y);toast(read?'A little more understanding. Progress saved.':'Marked as not yet studied.');}
     if(action==='scroll-section')$('#section-'+el.dataset.index)?.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'});
     if(action==='reveal'){const target=$('#'+el.dataset.target);target.classList.toggle('hidden');el.innerHTML=(target.classList.contains('hidden')?'Reveal solution':'Hide solution')+' '+icon('down');}
     if(action==='submit-quiz'){
@@ -351,12 +373,12 @@ document.addEventListener('keydown',event=>{
 let positionTimer;
 window.addEventListener('scroll',()=>{clearTimeout(positionTimer);positionTimer=setTimeout(()=>{const {c,m,tab}=state.current;if(c&&m&&tab==='study')localStorage.setItem(`folium-position-${c.id}-${m.id}`,String(scrollY));},200);},{passive:true});
 window.addEventListener('hashchange',async()=>{
-  try{await flushNotes();}catch(error){toast(error.message,true);}
+  try{await flushNotes();await loadRouteCourse();}catch(error){toast(error.message,true);}
   closeModal();render();const {c,m,tab}=state.current;
   if(c&&m&&tab==='study')window.scrollTo(0,Number(localStorage.getItem(`folium-position-${c.id}-${m.id}`)||0));else window.scrollTo(0,0);
 });
 window.addEventListener('beforeunload',()=>{
-  if(state.notesPending){const p=state.notesPending;fetch(`/api/courses/${p.cid}/modules/${enc(p.mid)}/progress`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:p.text}),keepalive:true}).catch(()=>{});}
+  if(state.notesPending||state.notesSaving){const p=state.notesPending||state.notesSaving;fetch(`/api/courses/${p.cid}/modules/${enc(p.mid)}/progress`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:p.text}),keepalive:true}).catch(()=>{});}
 });
 
 let polling=false;
@@ -364,18 +386,24 @@ setInterval(async()=>{
   if(polling)return;const active=state.courses.filter(c=>c.job?.state==='running');if(!active.length)return;
   polling=true;
   try{
-    for(const old of active){const c=await api('/courses/'+old.id);updateCourse(c);if(c.job?.state==='complete'&&c.modules.length)state.draftCid=null;
+    for(const old of active){let c=await api('/courses/'+old.id+'/status');
+      const packageState=x=>JSON.stringify(x.modules.map(m=>[m.id,!!m.package,m.package?.assessment_status]));
+      if(!old.summary){
+        if(c.job?.state!=='running'||packageState(c)!==packageState(old))c=await api('/courses/'+old.id);
+        else{old.job=c.job;old.status=c.status;old.updated=c.updated;c=old;}
+      }
+      updateCourse(c);if(c.job?.state==='complete'&&c.modules.length)state.draftCid=null;
       const r=route();if(r[0]==='course'&&r[1]===c.id&&r[2]!=='module'){
         if(c.status==='ready'){state.allowPrepared=null;goto(link(c.id));}else render();
       }else if(r[0]==='course'&&r[1]===c.id&&r[2]==='module'&&['practice','cards','pyqs'].includes(r[4])&&['practice','papers'].includes(c.job?.action)){
-        if(old.job?.updated!==c.job?.updated){if(c.job.state==='complete')state.review=null;render();}
+        if(c.job.state==='complete')state.review=null;render();
       }else if(!r[0])render();
     }
   }catch(error){toast(error.message,true);}finally{polling=false;}
 },2500);
 
 async function init(){
-  try{[state.courses,state.settings]=await Promise.all([api('/courses'),api('/settings')]);render();const {c,m,tab}=state.current;if(c&&m&&tab==='study')requestAnimationFrame(()=>scrollTo(0,Number(localStorage.getItem(`folium-position-${c.id}-${m.id}`)||0)));
+  try{[state.courses,state.settings]=await Promise.all([api('/courses'),api('/settings')]);await loadRouteCourse();render();const {c,m,tab}=state.current;if(c&&m&&tab==='study')requestAnimationFrame(()=>scrollTo(0,Number(localStorage.getItem(`folium-position-${c.id}-${m.id}`)||0)));
   }
   catch(error){$('#app').innerHTML=`<div class="fatal"><span class="eyebrow">FOLIUM</span><h1>A little reconnection.</h1><p>${esc(error.message)}</p><button class="btn primary" id="reconnect">Try again ${icon('refresh')}</button></div>`;$('#reconnect').addEventListener('click',init);}
 }
