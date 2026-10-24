@@ -54,7 +54,7 @@ The server listens on `127.0.0.1` only. The default port is `8765`; `FOLIUM_PORT
 ## Prepare and study a course
 
 1. Create a course and upload PDFs, identifying each as a syllabus, learning material, or past paper.
-2. Prepare scope and outline. Review topics, depth, conventions, unresolved pages, exclusions, prerequisites, and physical PDF source ranges.
+2. Inspect visual pages locally. Review the suggested scan/diagram selection and explicitly analyze it, or exclude it. Then prepare scope and outline; review topics, depth, conventions, unresolved pages, exclusions, prerequisites, and physical PDF source ranges.
 3. Start lesson preparation. Successful teaching plans and individual lessons are saved as they finish.
 4. Open a module from the course map to study, practise, view mapped past questions, or review cards.
 5. Export a course ZIP when you want a portable backup. Import it into another local installation to restore it.
@@ -73,11 +73,11 @@ If preparation pauses because of a quota, connection failure, or restart, resume
 
 By default, SQLite records, uploaded PDFs, provider-response caches, settings, and backups live under `data/`. They are excluded from Git, along with `.env`, local demo assets, temporary output, and development notes. Only the root README is tracked as Markdown. Tests generate small synthetic documents at runtime and need no sample PDFs or API key.
 
-Text extraction and PDF previews run locally. Preparing a new course sends all usable learning text in bounded scope batches to Gemini, followed by scope records and selected original excerpts for planning and teaching. Course ZIPs include your uploaded materials and notes, but exclude API credentials; share them only with intended recipients.
+Text extraction, local visual inspection and PDF previews run on your computer. Explicit visual analysis sends only selected derived page images and bounded surrounding text to Gemini. Preparing the outline sends usable learning text in bounded scope batches, followed by scope records and selected excerpts for planning and teaching. Course ZIPs include your uploaded materials, recognition and notes, but exclude API credentials; share them only with intended recipients.
 
 ## Limitations
 
-- Uploads currently support text-readable PDFs. Image-only scans need OCR before upload; uncertain extracted symbols should be checked against the original page.
+- Readable and scanned PDFs are accepted. Visual recognition uses the separately selected Gemini vision model after explicit page-selection review. A standalone local OCR engine and searchable-PDF export are not included. Scanned PYQ transcription remains separate, unimplemented work; image-only paper pages are saved but not automatically converted into questions.
 - Citations use physical PDF page numbers. Valid source locations and coverage maps do not establish that every AI-generated statement is correct or every source detail is covered.
 - Processing every extracted segment is not proof of semantic completeness. Diagrams, tables, reading order, and damaged notation can need manual review even on pages with usable text. Model uncertainty is a review signal, not a calibrated confidence score. Human topic-recall and cost/latency benchmarks remain outstanding.
 - Scope-based lessons label generated teaching separately from exact original-text excerpts. Topic-location links identify where topics occur, not evidence verifying expanded explanations. Stored legacy courses and unfinished legacy jobs retain their existing source selection; saved lessons are never silently regenerated or migrated.
@@ -88,11 +88,17 @@ Text extraction and PDF previews run locally. Preparing a new course sends all u
 
 ## Development
 
-### Scope-driven teaching and remaining scan work
+### Scope-driven teaching and visual recognition
 
 The PDFs and reviewed syllabus should define what the course teaches, its depth, and its notation. Gemini may explain those topics using its general knowledge, derivations, and generated examples, without reproducing the notes or requiring an excerpt for every explanation. Source-specific claims and original past-paper wording still need faithful extraction. Links that locate a topic in the materials must be distinguished from citations supporting a particular claim.
 
-Scope-driven teaching is implemented for new readable-PDF courses. The remaining scan workflow would add an explicitly requested Gemini visual pass on pages needing it. Optional local OCR could provide searchable text. Visual scope processing, scan-only ingestion, and OCR are not implemented; unreadable regions remain visible for review rather than being guessed.
+Scope-driven teaching supports new readable, scanned, and mixed courses. Local PDFium inspection checks rendered ink, image placement, repeated small margin assets, damaged text, and vector drawings. These are selection heuristics, not semantic proof: manually include a missed page or exclude an irrelevant one before analysis. Repeated small header/footer images are masked only in derived recognition copies; native text and original PDF bytes are preserved. Small margin images alone do not trigger recognition.
+
+Selected pages from all learning PDFs are combined into derived analysis PDFs, with at most four unique rendered pages and 8 MB per batch. Exact rendered duplicates share analysis while retaining their original document/page aliases. Recognition renders are capped at 3200 pixels on their longest edge; tiny notation and poor scans may remain unreadable. Each combined-PDF index maps back to originals on the server. The vision response supplies bounded recognized text, visual descriptions, page status, and scope records. Successful results are saved independently and reused after quota pauses, restarts, and backup restoration. Raw model responses and usage metadata use the same local provider cache and key rotation as teaching. There is no automatic model escalation or paid fallback.
+
+Visual scope records join native-text scope records before outline generation; already analyzed visual content does not require another scope-extraction request. Subsequent module/lesson planning uses the same reviewed scope pipeline. A common retrieval interface adds saved recognition to native text without overwriting it. Recognition and visual interpretations are explicitly unverified and cannot be labeled as verified original-text quotations. Partial, skipped, and unresolved teaching visuals remain visible for scope review. Page selection locks once scope preparation starts, preserving existing outlines and lessons; create a new course to add new visual analysis to a saved legacy course.
+
+Saved combined PDFs can be opened from course setup and reconstructed locally after import, without model requests. Derived renders/PDFs are disposable caches rather than additional ZIP entries: original PDFs, inspection/selection metadata, batch manifests, recognition, and scope records are all preserved in backups. Local Tesseract/OCRmyPDF integration, handwritten/notation accuracy benchmarks, and empirical cost/latency evaluation remain future work. Recognition cannot recover detail that is absent from the original scan.
 
 The backend uses Python's HTTP server, SQLite, pypdf, PDFium, and Pillow. The frontend is buildless HTML, CSS, and JavaScript with locally bundled KaTeX.
 
@@ -103,6 +109,7 @@ The backend uses Python's HTTP server, SQLite, pypdf, PDFium, and Pillow. The fr
 | `configuration.py` | Environment and local configuration loading |
 | `generation.py` | Gemini requests, retrieval, caching, and resumable jobs |
 | `scope.py` | Full-text batching, scope validation, coverage, review, and portable lineage |
+| `visual.py` | Local page triage, logo filtering, combined analysis PDFs, and unverified recognition |
 | `prompts.py` | Outline and teaching instructions |
 | `pdfview.py` | Local PDF page previews |
 | `repairs.py` | Reviewed corrections with backups |

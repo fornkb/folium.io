@@ -124,6 +124,15 @@ class Store:
             course["scope_records"] = records_for(course["scope"])
             # The browser needs review records, not internal batch responses and merges.
             course.pop("scope")
+        if course.get("visual"):
+            from visual import page_results
+            visual=course["visual"];results=page_results(visual)
+            for doc in course["documents"]:
+                doc["visually_analyzed_pages"]=sum(r["doc_id"]==doc["id"] and r["selected"] and (r["doc_id"],r["page"]) in results for r in visual["pages"])
+            course["visual"] = dict(version=visual["version"],fingerprint=visual["fingerprint"],
+                selection_reviewed=visual["selection_reviewed"],model=visual.get("model"),batch_ids=list(visual["batches"]),
+                pages=[dict(**{k:r[k] for k in ("doc_id","page","state","reason","selected","ignored_images")},
+                            result=results.get((r["doc_id"],r["page"]),{}).get("status")) for r in visual["pages"]])
         return course
 
     def add_pdf(self, course_id, name, role, content):
@@ -139,7 +148,7 @@ class Store:
             reader = PdfReader(io.BytesIO(content))
             if reader.is_encrypted and not reader.decrypt(""):
                 raise ValueError("This PDF is password protected. Upload an unlocked copy.")
-            if len(reader.pages) > 600:
+            if not 1 <= len(reader.pages) <= 600:
                 raise ValueError("Use PDFs with 600 pages or fewer for this prototype.")
             pages = [safe_text(p.extract_text() or "").strip() for p in reader.pages]
         except ValueError:
@@ -148,8 +157,6 @@ class Store:
             raise ValueError("This PDF could not be read. Try exporting it as a new PDF.") from exc
         if sum(len(p) for p in pages) > 3_000_000:
             raise ValueError("This PDF contains too much text. Split it into smaller files.")
-        if sum(len(p) for p in pages) < 60:
-            raise ValueError("No usable text was found. Image-only scans need OCR before upload.")
         doc = dict(id=uid(), name=Path(name.replace("\\", "/")).name[:180], role=role,
                    pages=pages, digest=digest)
         self._save_doc(course_id, doc, content)
@@ -259,6 +266,14 @@ class Store:
                            for p in range(len(next(n[0]["pages"] for n in prepared if n[0]["id"] == id_map[old])))}
                 source_docs = [dict(d, id=old) for old in original_docs for d, _ in prepared if d["id"] == id_map[old]]
                 original_text = {(d["id"], i+1): " ".join(text.split()) for d in source_docs for i, text in enumerate(d["pages"])}
+                if original.get("visual"):
+                    from visual import validate_saved_visual, visual_records, visual_status
+                    source_bytes={old:raw for old in original_docs for d,raw in prepared if d["id"]==id_map[old]}
+                    validate_saved_visual(original["visual"],source_docs,lambda doc_id:source_bytes[doc_id])
+                    if original.get("scope") and (original["scope"].get("visual_records",[]) != visual_records(original["visual"]) or original["scope"].get("visual_status",[]) != visual_status(original["visual"])):
+                        raise ValueError("The saved scope does not match visual analysis.")
+                elif original.get("scope",{}).get("visual_records") or original.get("scope",{}).get("visual_status"):
+                    raise ValueError("The saved scope is missing its visual analysis.")
                 def validate_original_quotes(package):
                     for section in package["sections"]:
                         if section.get("provenance") == "source_excerpt" and not all(" ".join(section["body"].split()) in original_text[(ref["doc_id"],ref["page"])] for ref in section["sources"]):
@@ -341,7 +356,7 @@ class Store:
                 course = self.create(original.get("title", "Imported course"), original.get("description", ""))
                 course.update(modules=remap(modules), pyqs=remap(pyqs),
                               reviews=reviews, demo=bool(original.get("demo", False)))
-                for field in ("document_coverage", "generation_version", "corrections", "warnings", "source_annotations", "scope", "scope_exclusions"):
+                for field in ("document_coverage", "generation_version", "corrections", "warnings", "source_annotations", "scope", "scope_exclusions", "visual"):
                     if field in original:
                         course[field] = remap(original[field])
                 if original.get("scope_review"):

@@ -149,12 +149,12 @@ def records_for(scope):
             aliases = [p["page"] for p in doc["pages"] if p.get("duplicate_of") in record["pages"]] if doc else []
             record["pages"] = sorted(set(record["pages"] + aliases))
             records.append(record)
-    return records
+    return records + [dict(r) for r in scope.get("visual_records", [])]
 
 
 def catalogue_record(record):
     result = {k: record[k] for k in ("id", "title", "subtopics", "depth", "methods", "conventions", "uncertainties")}
-    for key in ("doc_id", "role", "source_roles"):
+    for key in ("doc_id", "role", "source_roles", "origin", "visual_warning"):
         if key in record:
             result[key] = record[key]
     return result
@@ -271,6 +271,7 @@ def coverage(scope):
     pages = [p for d in scope["inventory"] for p in d["pages"]]
     processed = Counter((b["doc_id"], s["page"]) for b in scope["batches"].values() for s in b.get("manifest", []))
     unresolved = []
+    visual = {(r["doc_id"],r["page"]):r for r in scope.get("visual_status",[])}
     for doc in scope["inventory"]:
         for page in doc["pages"]:
             representative = page.get("duplicate_of") or page["page"]
@@ -279,7 +280,11 @@ def coverage(scope):
                       and b["manifest"][row["index"]]["page"] == representative]
             issues += [issue for b in scope["batches"].values() if b["doc_id"] == doc["doc_id"]
                        for r in b["records"] if representative in r["pages"] for issue in r["uncertainties"]]
-            if page["state"] in ("unresolved", "suspect") or issues:
+            v=visual.get((doc["doc_id"],page["page"]))
+            visual_done = v and v["status"] in ("mapped","non_teaching","blank")
+            if v and v["status"] in ("partial","unresolved"):
+                issues.append(v["reason"] or "Visual content is unresolved.")
+            if (page["state"] in ("unresolved", "suspect") and not visual_done) or issues:
                 unresolved.append(dict(doc_id=doc["doc_id"], page=page["page"], reason="; ".join(issues) or
                                        ("No extracted text; page may be blank, scanned, or visual." if page["state"] == "unresolved" else "Extraction contains damaged symbols.")))
     done = 0
@@ -288,7 +293,8 @@ def coverage(scope):
         for page in doc["pages"]:
             representative = by_page[page.get("duplicate_of") or page["page"]]
             expected = representative["expected_segments"]
-            done += bool(expected and processed[(doc["doc_id"], representative["page"])] == expected)
+            v=visual.get((doc["doc_id"],page["page"]))
+            done += bool((expected and processed[(doc["doc_id"], representative["page"])] == expected) or (v and v["status"] in ("mapped","partial","non_teaching","blank")))
     non_teaching = [dict(doc_id=b["doc_id"], page=b["manifest"][row["index"]]["page"], reason=row["reason"])
                     for b in scope["batches"].values() for row in b["segments"] if row["status"] == "non_teaching"]
     return dict(total_pages=len(pages), processed_pages=done, unresolved=unresolved, non_teaching=non_teaching,

@@ -15,6 +15,7 @@ from urllib.parse import unquote, urlparse
 from core import Store, clean, grade, module_state, review_card, validate_outline, safe_text, assessment_evidence
 from generation import Gemini, Jobs, Settings, scope_document_coverage
 from scope import review_outline, review_signature, coverage, module_packet
+from visual import select_pages, page_results, analysis_batches
 from configuration import configured_values, env_path
 from pdfview import render_page
 
@@ -117,6 +118,26 @@ def create_server(data_dir, port=8765, env_file=None):
                     if match:
                         file_path, _ = store.document(match[1])
                         return self.send(200, file_path.read_bytes(), "application/pdf")
+                    match=re.fullmatch(r"/api/courses/([a-f0-9]{16})/visual/batches/([a-f0-9]{24})\.pdf",path)
+                    if match:
+                        cid,key=match[1],match[2];course=store.course(cid);visual=course.get("visual",{})
+                        if key not in visual.get("batches",{}):
+                            raise ValueError("That saved visual batch is not available.")
+                        folder=store.root/"visual_analysis"/cid;target=folder/(key+".pdf")
+                        if not target.exists():
+                            import copy
+                            subset=copy.deepcopy(visual)
+                            manifest=visual["batches"][key]["manifest"]
+                            pairs={(r["aliases"][0]["doc_id"],r["aliases"][0]["page"]) for r in manifest}
+                            for row in subset["pages"]:row["selected"]=(row["doc_id"],row["page"]) in pairs
+                            rebuilt=analysis_batches(subset,store.docs(cid),lambda doc_id:store.document(doc_id)[0],folder)
+                            if not target.exists() and len(rebuilt)==1 and len(rebuilt[0]["manifest"])==len(manifest):
+                                # Rendering-library versions may change encoding bytes. This
+                                # preview preserves original page order without any inference.
+                                temporary=target.with_suffix(".pdf.tmp");temporary.write_bytes(rebuilt[0]["path"].read_bytes());temporary.replace(target)
+                        if not target.exists():
+                            raise ValueError("The saved batch could not be reconstructed from its source pages.")
+                        return self.send(200,target.read_bytes(),"application/pdf")
                     match = re.fullmatch(r"/api/documents/([a-f0-9]{16})/pages/(\d+)(\.png)?", path)
                     if match:
                         file_path,name = store.document(match[1])
@@ -124,11 +145,17 @@ def create_server(data_dir, port=8765, env_file=None):
                         if match[3]:
                             return self.send(200, render_page(file_path, page, store.root / "page_previews"), "image/png")
                         with store.lock:
-                            pages = json.loads(store.db.execute("SELECT pages FROM documents WHERE id=?",(match[1],)).fetchone()[0])
+                            row=store.db.execute("SELECT course_id,pages FROM documents WHERE id=?",(match[1],)).fetchone()
+                            pages = json.loads(row[1])
                         if not 1 <= page <= len(pages):
                             raise ValueError("Choose a valid source page.")
                         text = safe_text(pages[page-1])
+                        visual=store.course(row[0]).get("visual")
+                        recognition={}
+                        if visual and any(r["doc_id"]==match[1] and r["page"]==page and r["selected"] for r in visual["pages"]):
+                            recognition=page_results(visual).get((match[1],page),{})
                         return self.send(200,dict(name=name,page=page,text=text,
+                            recognized_text=recognition.get("recognized_text",""),visual_description=recognition.get("visual_description",""),
                             warning="Some PDF symbols could not be extracted. Check the original page for exact notation." if "\ufffd" in text else ""))
                     if path.startswith("/api/"):
                         return self.send(404, dict(error="This page could not be found."))
@@ -178,10 +205,18 @@ def create_server(data_dir, port=8765, env_file=None):
                     course["warnings"] = warnings
                     store.save(course)
                     return self.send(201, self.public(course["id"]))
-                match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/(outline|extend|prepare|modules/([^/]+)/(progress|quiz|review))", path)
+                match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/(visual|outline|extend|prepare|modules/([^/]+)/(progress|quiz|review))", path)
                 if match:
                     cid, action, mid, subaction = match[1], match[2], match[3], match[4]
                     course = store.course(cid)
+                    if action=="visual":
+                        if cid in jobs.active or course.get("scope") or course["modules"]:
+                            raise ValueError("Visual selection is locked once scope preparation starts.")
+                        if not course.get("visual"):
+                            raise ValueError("Inspect the course pages first.")
+                        visual=select_pages(course["visual"],body.get("selected"))
+                        store.update(cid,lambda c:c.update(visual=visual))
+                        return self.send(200,self.public(cid))
                     if action == "extend":
                         if cid in jobs.active:
                             raise ValueError("Wait for preparation to pause or finish before adding a module.")

@@ -109,12 +109,13 @@ class Settings:
         value["key_source"] = slots[0]["key_source"]
         value["has_saved_key"] = slots[0]["has_saved_key"]
         value["model"] = value.get("model") or external.get("GEMINI_MODEL") or "gemini-3.8-flash"
+        value["vision_model"] = value.get("vision_model") or value["model"]
         value.setdefault("interval", 6)
         return value
 
     def public(self):
         value = self.get()
-        return dict(has_key=bool(value["api_keys"]), model=value["model"], interval=value["interval"],
+        return dict(has_key=bool(value["api_keys"]), model=value["model"], vision_model=value["vision_model"], interval=value["interval"],
                     key_source=value["key_source"], has_saved_key=value["has_saved_key"],
                     key_count=len(value["api_keys"]), key_slots=value["key_slots"],
                     env_file_found=self.env_file.is_file())
@@ -124,6 +125,9 @@ class Settings:
         model = clean(body.get("model", effective["model"]), 100)
         if not re.fullmatch(r"gemini-[a-zA-Z0-9.\-]+", model):
             raise ValueError("Enter a valid Gemini model name.")
+        vision_model = clean(body.get("vision_model", effective["vision_model"]),100)
+        if not re.fullmatch(r"gemini-[a-zA-Z0-9.\-]+",vision_model):
+            raise ValueError("Enter a valid Gemini visual model name.")
         interval = max(3, min(60, int(body.get("interval", effective["interval"]))))
         with self.lock:
             # Save only explicit settings. Never copy an external key into this file.
@@ -135,6 +139,8 @@ class Settings:
                 if body.get(field.replace("api_key", "clear_key")):
                     saved.pop(field, None)
             saved["model"], saved["interval"] = model, interval
+            if "vision_model" in body:
+                saved["vision_model"] = vision_model
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(saved), "utf-8")
             tmp.replace(self.path)
