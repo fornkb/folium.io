@@ -13,7 +13,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from core import Store, clean, grade, module_state, review_card, validate_outline, safe_text, assessment_evidence
-from generation import Gemini, Jobs, Settings
+from generation import Gemini, Jobs, Settings, scope_document_coverage
+from scope import review_outline, review_signature, coverage, module_packet
 from configuration import configured_values, env_path
 from pdfview import render_page
 
@@ -173,7 +174,7 @@ def create_server(data_dir, port=8765, env_file=None):
                     for d in store.docs(course["id"]):
                         blank = sum(not p.strip() for p in d["pages"])
                         if blank:
-                            warnings.append(f"{d['name']}: {blank} page(s) had no readable text and will be skipped.")
+                            warnings.append(f"{d['name']}: {blank} page(s) have no extracted text. Their scope is unresolved; they may be blank, scanned, or visual.")
                     course["warnings"] = warnings
                     store.save(course)
                     return self.send(201, self.public(course["id"]))
@@ -190,10 +191,23 @@ def create_server(data_dir, port=8765, env_file=None):
                         jobs.start(cid, body.get("action", "generate"))
                         return self.send(202, self.public(cid))
                     if action == "outline":
-                        if cid in jobs.active or any(m.get("package") for m in course["modules"]):
+                        if cid in jobs.active or any(m.get("package") or m.get("preparation") for m in course["modules"]):
                             raise ValueError("The outline is locked once lesson generation starts. Create a new course to change its materials or structure.")
                         modules = validate_outline(body.get("modules"))
-                        store.update(cid, lambda c: c.update(modules=modules, status="outline"))
+                        if course.get("scope"):
+                            exclusions = body.get("scope_exclusions", course.get("scope_exclusions", []))
+                            review_outline(course, modules, exclusions, store.docs(cid))
+                            for module in modules:
+                                module_packet(course, module)
+                            if coverage(course["scope"])["unresolved"] and body.get("acknowledge_gaps") is not True:
+                                raise ValueError("Review and acknowledge the unresolved pages before saving the outline.")
+                            def save_review(c):
+                                c.update(modules=modules, scope_exclusions=exclusions, status="outline",
+                                         scope_review=review_signature(modules, exclusions, c["scope"]["fingerprint"]))
+                                c["document_coverage"] = scope_document_coverage(c, store.docs(cid))
+                            store.update(cid, save_review)
+                        else:
+                            store.update(cid, lambda c: c.update(modules=modules, status="outline"))
                         return self.send(200, self.public(cid))
                     if not any(m["id"] == mid for m in course["modules"]):
                         raise ValueError("Module not found.")

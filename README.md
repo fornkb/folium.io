@@ -54,12 +54,18 @@ The server listens on `127.0.0.1` only. The default port is `8765`; `FOLIUM_PORT
 ## Prepare and study a course
 
 1. Create a course and upload PDFs, identifying each as a syllabus, learning material, or past paper.
-2. Prepare an outline, then review its modules, topics, prerequisites, and document coverage.
+2. Prepare scope and outline. Review topics, depth, conventions, unresolved pages, exclusions, prerequisites, and physical PDF source ranges.
 3. Start lesson preparation. Successful teaching plans and individual lessons are saved as they finish.
 4. Open a module from the course map to study, practise, view mapped past questions, or review cards.
 5. Export a course ZIP when you want a portable backup. Import it into another local installation to restore it.
 
-Preparation uses one request for the outline, then one teaching-plan request per unfinished module and one request per focused lesson (one to eight lessons per module). Past-paper mapping uses a request per readable paper page. Each lesson also supplies its practice questions and cards.
+For new courses, preparation first processes all readable learning text into saved scope records. Batches are bounded to 24,000 text characters, prefer available section boundaries, split dense pages without dropping their tails, remove exact repeated boundary boilerplate, and share analysis of exact duplicate pages while retaining every physical location. Empty and damaged-text pages remain visibly unresolved. PYQs use a separate path.
+
+Scope records retain subtopics, expected depth, methods, conventions, uncertainty, physical locations, and optional exact source anchors. Large catalogues are merged in saved stages with explicit input-to-output lineage. The outline must assign every scope record to a module or give an exclusion reason. Source ranges are derived on the server and editable; they can span multiple PDFs. Review and save the outline before explicitly starting lessons, acknowledging unresolved pages where present. Per-module clarifications let you correct expected scope/depth without altering extracted text.
+
+Generation uses one teaching-plan request per unfinished module and one request per focused lesson (one to eight lessons per module). Plans use approved scope instead of repeating raw PDFs; each lesson receives its assigned scope records and up to 12,000 characters of selected original passages/anchors from approved module ranges. Retrieval excludes zero-match filler and can find text beyond the start of a page. Exact source anchors get priority. Every approved scope record must be assigned to a lesson. Oversized module packets ask you to split the module before starting generation. Past-paper mapping uses a request per readable paper page. Each lesson also supplies its practice questions and cards.
+
+This initial scope pass may require more requests than the former sampled outline. Total savings depend on course size, repeated lesson context, output length, and provider quotas. No cost or completeness guarantee is made. Successful raw provider responses and available usage metadata are cached locally before validation; validated batches, merges, plans, and lessons resume independently. Backups preserve scope stages, source mappings, review state, and unfinished generation.
 
 If preparation pauses because of a quota, connection failure, or restart, resume it explicitly. Completed stages are reused. Existing saved lessons are preserved when prompts change; improved prompts apply to newly generated content. Reading, navigation, quizzes, solution reveals, notes, and card reviews make **no AI requests**.
 
@@ -67,12 +73,14 @@ If preparation pauses because of a quota, connection failure, or restart, resume
 
 By default, SQLite records, uploaded PDFs, provider-response caches, settings, and backups live under `data/`. They are excluded from Git, along with `.env`, local demo assets, temporary output, and development notes. Only the root README is tracked as Markdown. Tests generate small synthetic documents at runtime and need no sample PDFs or API key.
 
-Text extraction and PDF previews run locally. Source excerpts selected for preparation are sent to Gemini. Course ZIPs include your uploaded materials and notes, but exclude API credentials; share them only with intended recipients.
+Text extraction and PDF previews run locally. Preparing a new course sends all usable learning text in bounded scope batches to Gemini, followed by scope records and selected original excerpts for planning and teaching. Course ZIPs include your uploaded materials and notes, but exclude API credentials; share them only with intended recipients.
 
 ## Limitations
 
 - Uploads currently support text-readable PDFs. Image-only scans need OCR before upload; uncertain extracted symbols should be checked against the original page.
 - Citations use physical PDF page numbers. Valid source locations and coverage maps do not establish that every AI-generated statement is correct or every source detail is covered.
+- Processing every extracted segment is not proof of semantic completeness. Diagrams, tables, reading order, and damaged notation can need manual review even on pages with usable text. Model uncertainty is a review signal, not a calibrated confidence score. Human topic-recall and cost/latency benchmarks remain outstanding.
+- Scope-based lessons label generated teaching separately from exact original-text excerpts. Topic-location links identify where topics occur, not evidence verifying expanded explanations. Stored legacy courses and unfinished legacy jobs retain their existing source selection; saved lessons are never silently regenerated or migrated.
 - AI-generated practice and past-paper solutions are labeled. Uploaded-paper frequency reflects the papers you provided and does not predict future exams.
 - Objective answers use saved answer keys and deterministic scoring. Subjective questions provide solutions for self-review, without automatic grading.
 - Recall estimates depend on distinct answered questions, topic coverage, and first-encounter/recent results. Repeating a small question bank does not establish mastery.
@@ -80,11 +88,11 @@ Text extraction and PDF previews run locally. Source excerpts selected for prepa
 
 ## Development
 
-### Planned direction: scope-driven teaching and scanned PDFs
+### Scope-driven teaching and remaining scan work
 
 The PDFs and reviewed syllabus should define what the course teaches, its depth, and its notation. Gemini may explain those topics using its general knowledge, derivations, and generated examples, without reproducing the notes or requiring an excerpt for every explanation. Source-specific claims and original past-paper wording still need faithful extraction. Links that locate a topic in the materials must be distinguished from citations supporting a particular claim.
 
-The proposed scan workflow keeps local text extraction for readable pages and uses an explicitly requested Gemini visual pass on pages needing it to build a saved, page-aware scope map. Unreadable pages and uncertain notation remain visible for review. Optional local OCR can provide searchable text. This is a planned change: the current app still requires text-readable PDFs and uses excerpt-grounded lesson prompts. Scan processing and scope-driven generation have not been implemented or benchmarked.
+Scope-driven teaching is implemented for new readable-PDF courses. The remaining scan workflow would add an explicitly requested Gemini visual pass on pages needing it. Optional local OCR could provide searchable text. Visual scope processing, scan-only ingestion, and OCR are not implemented; unreadable regions remain visible for review rather than being guessed.
 
 The backend uses Python's HTTP server, SQLite, pypdf, PDFium, and Pillow. The frontend is buildless HTML, CSS, and JavaScript with locally bundled KaTeX.
 
@@ -94,6 +102,7 @@ The backend uses Python's HTTP server, SQLite, pypdf, PDFium, and Pillow. The fr
 | `core.py` | Persistence, validation, backups, and practice scoring |
 | `configuration.py` | Environment and local configuration loading |
 | `generation.py` | Gemini requests, retrieval, caching, and resumable jobs |
+| `scope.py` | Full-text batching, scope validation, coverage, review, and portable lineage |
 | `prompts.py` | Outline and teaching instructions |
 | `pdfview.py` | Local PDF page previews |
 | `repairs.py` | Reviewed corrections with backups |

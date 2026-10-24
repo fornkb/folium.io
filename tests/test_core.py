@@ -13,8 +13,8 @@ from unittest.mock import patch
 
 from app import create_server
 from core import Store, grade, module_state, review_card, validate_outline, validate_package
-from generation import Gemini, Jobs, ProviderError, Settings, source_pages, OUTLINE, TEACHING_PLAN
-from fixtures import TEST_MODULES, lesson_fixture, pdf_fixture, seed_test_course
+from generation import Gemini, Jobs, ProviderError, Settings, source_pages, OUTLINE, TEACHING_PLAN, SCOPE_BATCH, SCOPED_TEACHING_PLAN
+from fixtures import TEST_MODULES, lesson_fixture, pdf_fixture, seed_test_course, scope_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 (ROOT / "tmp").mkdir(exist_ok=True)
@@ -310,24 +310,32 @@ class HttpTests(unittest.TestCase):
         cid=course["id"]
         doc=course["documents"][0]
         def generate(prompt,schema,validator):
+            if schema==SCOPE_BATCH:
+                return validator(scope_fixture(prompt))
             if schema==OUTLINE:
-                return validator(dict(description="Test outline",modules=[dict(id="m1",title="Complexity",description="Growth",topics=["Big O"],prerequisites=[])],document_coverage=[dict(doc_id=doc["id"],module_ids=["m1"],notes="")]))
-            if schema==TEACHING_PLAN:
-                return validator(dict(overview="Overview",objectives=["Understand Big O"],lessons=[dict(id="l1",title="Complexity",topics=["Big O"],concepts=["Growth"],gaps=[])]))
+                ids=[r["id"] for r in json.loads(prompt.split("SCOPE CATALOGUE\n")[1])]
+                return validator(dict(description="Test outline",modules=[dict(id="m1",title="Complexity",description="Growth",topics=["Big O"],prerequisites=[],scope_ids=ids)],exclusions=[]))
+            if schema==SCOPED_TEACHING_PLAN:
+                ids=[r["id"] for r in json.loads(prompt.split("APPROVED SCOPE PACKET\n")[1])["records"]]
+                return validator(dict(overview="Overview",objectives=["Understand Big O"],lessons=[dict(id="l1",title="Complexity",topics=["Big O"],concepts=["Growth"],gaps=[],scope_ids=ids)]))
             package=lesson_fixture(TEST_MODULES[0],doc["id"],1)
+            for section in package["sections"]:
+                section.update(provenance="generated", sources=[])
             for q in package["questions"]:q["topic"]="Big O"
             return validator(package)
         with patch.object(self.server.jobs.provider,"generate",side_effect=generate) as provider:
             self.request(f"/api/courses/{cid}/prepare",dict(action="outline"))
             course=self.wait_job(cid)
             self.assertEqual("outline",course["status"])
+            with self.assertRaises(urllib.error.HTTPError):
+                self.request(f"/api/courses/{cid}/prepare",dict(action="generate"))
             self.request(f"/api/courses/{cid}/outline",dict(modules=course["modules"]))
             self.request(f"/api/courses/{cid}/prepare",dict(action="generate"))
             course=self.wait_job(cid)
             self.assertEqual("ready",course["status"])
-            self.assertEqual(3,provider.call_count)
+            self.assertEqual(4,provider.call_count)
             self.request(f"/api/courses/{cid}/prepare",dict(action="generate"))
-            self.assertEqual(3,provider.call_count)
+            self.assertEqual(4,provider.call_count)
         text=self.request(f"/api/documents/{doc['id']}/pages/1")
         self.assertIn("Complexity",text["text"])
         with urllib.request.urlopen(self.url+f"/api/documents/{doc['id']}/pages/1.png") as response:

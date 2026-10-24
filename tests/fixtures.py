@@ -1,6 +1,7 @@
 """Small synthetic fixtures; no course files or API requests are needed."""
 import copy
 import io
+import json
 from functools import lru_cache
 
 from pypdf import PdfWriter
@@ -16,6 +17,14 @@ TEST_MODULES = [
     for i in range(6)
 ]
 SECTION_TITLES = ("Core concept", "Formal definition", "Worked example")
+
+
+def scope_fixture(prompt):
+    data = json.loads(prompt.split("\n")[-1])
+    indexes = list(range(len(data["segments"])))
+    return dict(records=[dict(title="Complexity", subtopics=["Topic A", "Topic B"], depth="Compute and explain growth rates.",
+                             methods=["Compare cases"], conventions=[], uncertainties=[], segment_indexes=indexes, anchors=[])],
+                segments=[dict(index=i, status="mapped", reason="") for i in indexes])
 
 
 @lru_cache(maxsize=2)

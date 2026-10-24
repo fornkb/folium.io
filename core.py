@@ -118,6 +118,12 @@ class Store:
                                    annotations=[n for n in course.get("source_annotations", []) if n["doc_id"] == d["id"]],
                                    readable_pages=sum(bool(p.strip()) for p in d["pages"]))
                                for d in self.docs(course_id)]
+        if course.get("scope"):
+            from scope import coverage, records_for
+            course["scope_coverage"] = coverage(course["scope"])
+            course["scope_records"] = records_for(course["scope"])
+            # The browser needs review records, not internal batch responses and merges.
+            course.pop("scope")
         return course
 
     def add_pdf(self, course_id, name, role, content):
@@ -197,8 +203,18 @@ class Store:
             combined = validate_outline(course["modules"] + new_modules)
             if len(combined) == len(course["modules"]):
                 raise ValueError("Add at least one missing module.")
+            if course.get("scope"):
+                from scope import review_outline, review_signature
+                exclusions = [row for row in course.get("scope_exclusions", [])
+                              if not any(row["scope_id"] in m.get("scope_ids", []) for m in combined)]
+                review_outline(course, combined, exclusions, self.docs(course_id))
+                course["scope_exclusions"] = exclusions
+                course["scope_review"] = review_signature(combined, exclusions, course["scope"]["fingerprint"])
             self.backup(course_id, "before-extension")
             course["modules"].extend(combined[len(course["modules"]):])
+            if course.get("scope"):
+                from generation import scope_document_coverage
+                course["document_coverage"] = scope_document_coverage(course, self.docs(course_id))
             course["status"] = "outline"
             course["job"] = None
             self.save(course)
@@ -217,7 +233,8 @@ class Store:
                 docs = manifest["documents"]
                 if not isinstance(docs, list) or len(docs) > 60:
                     raise ValueError("Invalid backup documents.")
-                modules = validate_outline(original.get("modules", []))
+                raw_modules = original.get("modules", [])
+                modules = validate_outline(raw_modules) if raw_modules else []
                 original_docs = {d["id"]: d for d in docs}
                 if len(original_docs) != len(docs):
                     raise ValueError("Duplicate document IDs in backup.")
@@ -240,21 +257,36 @@ class Store:
                                           pages=pages, digest=hashlib.sha256(raw).hexdigest()), raw))
                 allowed = {(old, p + 1) for old, d in original_docs.items()
                            for p in range(len(next(n[0]["pages"] for n in prepared if n[0]["id"] == id_map[old])))}
+                source_docs = [dict(d, id=old) for old in original_docs for d, _ in prepared if d["id"] == id_map[old]]
+                if original.get("scope"):
+                    from scope import validate_saved_scope, review_outline, review_signature
+                    validate_saved_scope(original["scope"], source_docs)
+                    if modules:
+                        review_outline(original, modules, original.get("scope_exclusions", []), source_docs)
+                    if original.get("scope_review") and original["scope_review"] != review_signature(modules, original.get("scope_exclusions", []), original["scope"]["fingerprint"]):
+                        raise ValueError("Invalid reviewed scope in backup.")
+                from scope import validate_ranges
                 for module in modules:
+                    if "source_ranges" in module:
+                        validate_ranges(module["source_ranges"], source_docs)
                     old_module = original["modules"][next(i for i,m in enumerate(original["modules"]) if m["id"] == module["id"])]
                     pkg = old_module.get("package")
                     if pkg:
                         validate_package(pkg, allowed)
+                        if "topic_locations" in pkg:
+                            validate_ranges(pkg["topic_locations"], source_docs)
                         module["package"] = pkg
                     preparation = old_module.get("preparation")
                     if preparation and not pkg:
                         from generation import validate_plan
-                        validate_plan(preparation["plan"], module["topics"])
+                        validate_plan(preparation["plan"], module["topics"], module.get("scope_ids") if original.get("scope") else None)
                         lesson_ids = {l["id"] for l in preparation["plan"]["lessons"]}
                         if not isinstance(preparation.get("lessons"), dict) or any(lid not in lesson_ids for lid in preparation["lessons"]):
                             raise ValueError("Invalid unfinished lessons in backup.")
                         for part in preparation["lessons"].values():
                             validate_package(part, allowed)
+                            if "topic_locations" in part:
+                                validate_ranges(part["topic_locations"], source_docs)
                         module["preparation"] = preparation
                 module_ids = {m["id"] for m in modules}
                 for row in original.get("document_coverage", []):
@@ -302,14 +334,16 @@ class Store:
                 course = self.create(original.get("title", "Imported course"), original.get("description", ""))
                 course.update(modules=remap(modules), pyqs=remap(pyqs),
                               reviews=reviews, demo=bool(original.get("demo", False)))
-                for field in ("document_coverage", "generation_version", "corrections", "warnings", "source_annotations"):
+                for field in ("document_coverage", "generation_version", "corrections", "warnings", "source_annotations", "scope", "scope_exclusions"):
                     if field in original:
                         course[field] = remap(original[field])
+                if original.get("scope_review"):
+                    course["scope_review"] = review_signature(course["modules"], course.get("scope_exclusions", []), course["scope"]["fingerprint"])
                 for module, old in zip(course["modules"], original["modules"]):
                     for field in ("read", "bookmarked", "notes", "attempts", "question_evidence"):
                         if field in old:
                             module[field] = old[field]
-                course["status"] = "ready" if original.get("status") == "ready" and all(m.get("package") for m in modules) else "outline"
+                course["status"] = "ready" if original.get("status") == "ready" and modules and all(m.get("package") for m in modules) else "outline" if modules else "uploaded"
                 # Preserve PYQ-stage completion when resuming an imported course.
                 course["pyq_batches"] = [id_map.get(x.split(":")[0], x.split(":")[0]) + ":" + x.split(":", 1)[1]
                                          for x in original.get("pyq_batches", []) if ":" in x]
@@ -335,6 +369,9 @@ def validate_outline(modules):
         result.append(dict(id=mid, title=clean(m["title"], 150), description=clean(m.get("description"), 600),
                            topics=[clean(t, 150) for t in topics if clean(t)],
                            prerequisites=list(dict.fromkeys(m.get("prerequisites", [])))))
+        for key in ("scope_ids", "source_ranges", "scope_notes"):
+            if key in m:
+                result[-1][key] = copy.deepcopy(m[key])
         if not result[-1]["topics"]:
             raise ValueError("Every module needs at least one topic.")
     ids = {m["id"] for m in result}
@@ -376,8 +413,16 @@ def validate_package(pkg, allowed):
             raise ValueError("A lesson section has an invalid format.")
         if not clean(sec.get("title")) or not clean(sec.get("body")):
             raise ValueError("The generated lesson has an empty section.")
+        if not isinstance(sec.get("sources", []), list):
+            raise ValueError("Invalid lesson citation list.")
+        if "provenance" in sec and sec["provenance"] not in ("generated", "source_excerpt"):
+            raise ValueError("Invalid lesson provenance.")
+        if sec.get("provenance") == "generated" and sec.get("sources"):
+            raise ValueError("Generated teaching cannot carry source-support citations.")
+        if sec.get("provenance") == "source_excerpt" and not sec.get("sources"):
+            raise ValueError("A source excerpt needs a citation.")
         for ref in sec.get("sources", []):
-            if (ref.get("doc_id"), ref.get("page")) not in allowed:
+            if not isinstance(ref, dict) or type(ref.get("page")) is not int or (ref.get("doc_id"), ref.get("page")) not in allowed:
                 raise ValueError("A generated citation did not match a supplied source page. Resume to retry.")
     questions = pkg.get("questions", [])
     if not isinstance(questions, list) or not questions:
