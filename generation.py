@@ -501,7 +501,7 @@ class Jobs:
     def _run(self, cid, action, module_id=None):
         try:
             if action == "inspect":
-                self._inspect(cid)
+                self._inspect(cid, refresh=True)
             elif action == "visual":
                 self._visual(cid)
             elif action == "outline":
@@ -523,13 +523,25 @@ class Jobs:
             with self.lock:
                 self.active.discard(cid)
 
-    def _inspect(self,cid):
+    def _inspect(self,cid, *, refresh=False):
         course=self.store.course(cid)
-        if course.get("visual"):
+        if course.get("visual") and not refresh:
             return course["visual"]
         docs=self.store.docs(cid)
         visual=inspect_documents(docs,lambda doc_id:self.store.document(doc_id)[0],
             lambda n,total:self._status(cid,"running","inspect",f"Inspecting page {n}/{total} locally…",n,total))
+        previous=course.get("visual")
+        if previous:
+            # Explicit re-inspection refreshes automatic suggestions, while an
+            # already-reviewed selection and all successful responses stay saved.
+            if previous.get("selection_reviewed") or previous.get("batches"):
+                selected={(r["doc_id"],r["page"]):r["selected"] for r in previous["pages"]}
+                for row in visual["pages"]:
+                    row["selected"]=selected.get((row["doc_id"],row["page"]),row["selected"])
+                visual["selection_reviewed"]=previous["selection_reviewed"]
+            visual["batches"]=previous["batches"]
+            if "model" in previous:
+                visual["model"]=previous["model"]
         self.store.update(cid,lambda c:c.update(visual=visual))
         return visual
 

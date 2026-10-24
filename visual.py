@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import ctypes
 from collections import Counter
 
 import pypdfium2 as pdfium
@@ -16,6 +17,7 @@ from pdfview import RENDER_LOCK
 from scope import identity, string, strings
 
 VISUAL_VERSION = "visual-scope-v1"
+INSPECTION_VERSION = 2
 MAX_BATCH_PAGES = 4
 MAX_PDF_BYTES = 8 * 1024 * 1024
 MAX_EDGE = 3200
@@ -35,8 +37,44 @@ def _area(box):
     return max(0, box[2]-box[0]) * max(0, box[3]-box[1])
 
 
-def _margin(box):
-    return box[3] <= .16 or box[1] >= .84
+def _margin(box, edge=.18):
+    # Slide decorations commonly cross the former strict 16% boundary.
+    return box[3] <= edge or box[1] >= 1-edge
+
+
+def _background_path(obj, box):
+    """A page-sized solid fill is layout, not evidence of a diagram."""
+    if _area(box) < .95 or pdfium.raw.FPDFPath_CountSegments(obj) > 5:
+        return False
+    fill, stroke = ctypes.c_int(), ctypes.c_int()
+    return bool(pdfium.raw.FPDFPath_GetDrawMode(obj, ctypes.byref(fill), ctypes.byref(stroke))
+                and fill.value != pdfium.raw.FPDF_FILLMODE_NONE and not stroke.value)
+
+
+def _visual_annotations(page, width, height):
+    """Rendered stamps/free text can contain teaching absent from native extraction."""
+    kinds = {pdfium.raw.FPDF_ANNOT_FREETEXT, pdfium.raw.FPDF_ANNOT_STAMP,
+             pdfium.raw.FPDF_ANNOT_INK, pdfium.raw.FPDF_ANNOT_LINE,
+             pdfium.raw.FPDF_ANNOT_SQUARE, pdfium.raw.FPDF_ANNOT_CIRCLE,
+             pdfium.raw.FPDF_ANNOT_POLYGON, pdfium.raw.FPDF_ANNOT_POLYLINE}
+    hidden = (pdfium.raw.FPDF_ANNOT_FLAG_HIDDEN | pdfium.raw.FPDF_ANNOT_FLAG_INVISIBLE |
+              pdfium.raw.FPDF_ANNOT_FLAG_NOVIEW)
+    for index in range(pdfium.raw.FPDFPage_GetAnnotCount(page)):
+        annot = pdfium.raw.FPDFPage_GetAnnot(page, index)
+        if not annot:
+            continue
+        try:
+            if pdfium.raw.FPDFAnnot_GetSubtype(annot) not in kinds or pdfium.raw.FPDFAnnot_GetFlags(annot) & hidden:
+                continue
+            rect = pdfium.raw.FS_RECTF()
+            if pdfium.raw.FPDFAnnot_GetRect(annot, ctypes.byref(rect)):
+                box = [max(0,rect.left/width), max(0,1-rect.top/height),
+                       min(1,rect.right/width), min(1,1-rect.bottom/height)]
+                if _area(box) >= .002 and not _margin(box):
+                    return True
+        finally:
+            pdfium.raw.FPDFPage_CloseAnnot(annot)
+    return False
 
 
 def _render(page, edge, masks=()):
@@ -55,12 +93,18 @@ def _render(page, edge, masks=()):
     return image
 
 
-def inspect_documents(docs, path_for, progress=lambda n, total: None):
+def inspect_documents(docs, path_for, progress=lambda n, total: None, *, inspection_version=INSPECTION_VERSION):
     """No inference: inspect objects, repeated margin images and rendered ink.
 
     Geometry and repetition are heuristics, not semantic classification. The UI
     exposes every learning page for manual inclusion or exclusion.
     """
+    if type(inspection_version) is not int or inspection_version not in (1, INSPECTION_VERSION):
+        raise ValueError("Unsupported visual inspection version.")
+    # Reproduce old metadata only when validating an existing backup. Recognition
+    # manifests and render identities remain compatible across triage revisions.
+    legacy = inspection_version == 1
+    margin = lambda box: _margin(box, .16 if legacy else .18)
     rows = []
     total = sum(len(d["pages"]) for d in docs if d["role"] != "pyq")
     with RENDER_LOCK:
@@ -82,12 +126,15 @@ def inspect_documents(docs, path_for, progress=lambda n, total: None):
                             box = _bounds(obj, width, height)
                             if obj.type == pdfium.raw.FPDF_PAGEOBJ_IMAGE:
                                 # Small margin assets can be compared without decoding their pixels.
-                                signature = hashlib.sha256(bytes(obj.get_data())).hexdigest() if _area(box) < .04 and _margin(box) else None
+                                signature = hashlib.sha256(bytes(obj.get_data())).hexdigest() if _area(box) < .04 and margin(box) else None
                                 images.append(dict(box=box, signature=signature))
                             else:
-                                paths.append(box)
+                                if legacy or not _background_path(obj, box):
+                                    paths.append(box)
                         rows.append(dict(doc_id=doc["id"], page=index+1, digest=doc["digest"],
                                          native_characters=len(text.strip()), images=images, paths=paths))
+                        if not legacy:
+                            rows[-1]["visual_annotations"] = _visual_annotations(page, width, height)
                     finally:
                         page.close()
                     progress(len(rows), total)
@@ -102,7 +149,7 @@ def inspect_documents(docs, path_for, progress=lambda n, total: None):
                 for row in (r for r in rows if r["doc_id"] == doc["id"]):
                     row["masks"] = [im["box"] for im in row["images"] if im["signature"] and repeats[im["signature"]] >= 3]
                     meaningful = [im for im in row["images"] if im["box"] not in row["masks"] and
-                                  not (_area(im["box"]) < .025 and _margin(im["box"]))]
+                                  not (_area(im["box"]) < .025 and margin(im["box"]))]
                     page = document[row["page"]-1]
                     try:
                         thumbnail = _render(page, 400, row["masks"])
@@ -112,12 +159,15 @@ def inspect_documents(docs, path_for, progress=lambda n, total: None):
                     finally:
                         page.close()
                     text = doc["pages"][row["page"]-1]
-                    teaching_paths=[box for box in row["paths"] if not _margin(box)]
+                    teaching_paths=[box for box in row["paths"] if not margin(box) and
+                        (legacy or not (box[2]-box[0] > .8 and box[3]-box[1] < .01))]
                     drawing = len(teaching_paths) >= 4 and any(_area(box) > .005 for box in teaching_paths)
                     if ink < .0003 and not text.strip():
                         state, reason = "blank", "No substantial content detected in the rendered page."
                     elif meaningful:
                         state, reason = "candidate", "Scanned or text-bearing image content; review selection."
+                    elif row.get("visual_annotations"):
+                        state, reason = "candidate", "Visible PDF annotations may contain teaching absent from native text."
                     elif drawing:
                         state, reason = "candidate", "Vector drawing or diagram may add teaching scope."
                     elif "\ufffd" in text or (not text.strip() and ink >= .0003 and not row["images"]):
@@ -131,7 +181,10 @@ def inspect_documents(docs, path_for, progress=lambda n, total: None):
             finally:
                 document.close()
     fingerprint = identity([VISUAL_VERSION, sorted((d["digest"], d["name"], d["role"]) for d in docs if d["role"] != "pyq")])
-    return dict(version=VISUAL_VERSION, fingerprint=fingerprint, pages=rows, batches={}, selection_reviewed=not any(r["selected"] for r in rows))
+    result = dict(version=VISUAL_VERSION, fingerprint=fingerprint, pages=rows, batches={}, selection_reviewed=not any(r["selected"] for r in rows))
+    if not legacy:
+        result["inspection_version"] = inspection_version
+    return result
 
 
 def select_pages(visual, selected):
@@ -300,7 +353,7 @@ def recognized_sources(docs, visual):
 
 def validate_saved_visual(visual, docs, path_for):
     """Validate physical identities and schema, not recognition accuracy."""
-    initial = inspect_documents(docs, path_for)
+    initial = inspect_documents(docs, path_for, inspection_version=visual.get("inspection_version",1) if isinstance(visual,dict) else 1)
     if not isinstance(visual, dict) or visual.get("version") != VISUAL_VERSION or visual.get("fingerprint") != initial["fingerprint"] or type(visual.get("selection_reviewed")) is not bool:
         raise ValueError("Invalid visual inspection in backup.")
     rows = visual.get("pages")
