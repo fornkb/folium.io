@@ -139,6 +139,11 @@ function addScopeRanges(module,records){
   module.source_ranges=ranges;
 }
 async function prepare(action){const c=state.current.c;const saved=await api(`/courses/${c.id}/prepare`,{action});updateCourse(saved);render();}
+async function saveVisual(extra=null,skip=false){
+  const c=state.current.c,selected=skip?[]:$$('[data-visual-doc]:checked').map(x=>({doc_id:x.dataset.visualDoc,page:Number(x.dataset.visualPage)}));
+  if(extra&&!selected.some(r=>r.doc_id===extra.doc_id&&r.page===extra.page))selected.push(extra);
+  const saved=await api(`/courses/${c.id}/visual`,{selected});updateCourse(saved);return saved;
+}
 async function progress(body){
   const {c,m}=state.current;
   if(!c||!m)throw new Error('Choose a module first.');
@@ -202,7 +207,7 @@ document.addEventListener('click',async event=>{
   try{
     const {c,m}=state.current;
     if(action==='skip-content'){event.preventDefault();$('#main').focus();$('#main').scrollIntoView();}
-    if(['prepare-outline','resume','generate-course','save-outline','save-notes','submit-quiz','rate-card','clear-key','bookmark','mark-read'].includes(action)){busy=true;el.disabled=true;}
+    if(['prepare-outline','inspect-visual','analyze-visual','save-visual','skip-visual','include-visual-page','resume','generate-course','save-outline','save-notes','submit-quiz','rate-card','clear-key','bookmark','mark-read'].includes(action)){busy=true;el.disabled=true;}
     if(action==='sidebar'){$('#sidebar').classList.add('open');$('.mobile-shade').classList.add('open');}
     if(action==='close-sidebar'){$('#sidebar').classList.remove('open');$('.mobile-shade').classList.remove('open');}
     if(action==='import')$('#import-input').click();
@@ -211,7 +216,7 @@ document.addEventListener('click',async event=>{
     if(action==='source')source(el.dataset.doc,el.dataset.page);
     if(action==='source-text'){
       const input=$('#source-page'),text=$('#source-text'),image=$('#source-image');
-      if(text.classList.contains('hidden')){const data=await api(`/documents/${input.dataset.doc}/pages/${input.value}`);text.textContent=(data.warning?data.warning+'\n\n':'')+(data.text||'No readable text was found on this page.');$('#source-loading').classList.add('hidden');text.classList.remove('hidden');image.classList.add('hidden');el.textContent='View original page';}
+      if(text.classList.contains('hidden')){const data=await api(`/documents/${input.dataset.doc}/pages/${input.value}`);text.textContent=(data.warning?data.warning+'\n\n':'')+('NATIVE PDF TEXT\n'+(data.text||'No native text is available.')+(data.recognized_text?'\n\nRECOGNIZED IMAGE TEXT · UNVERIFIED\n'+data.recognized_text:'')+(data.visual_description?'\n\nVISUAL INTERPRETATION · UNVERIFIED\n'+data.visual_description:''));$('#source-loading').classList.add('hidden');text.classList.remove('hidden');image.classList.add('hidden');el.textContent='View original page';}
       else{text.classList.add('hidden');image.classList.remove('hidden');el.textContent='Read extracted text';}
     }
     if(action==='course-view'){state.view=el.dataset.view;state.zoom=null;render();}
@@ -235,13 +240,18 @@ document.addEventListener('click',async event=>{
     if(action==='save-notes'){await flushNotes();toast('Your notes are saved.');}
     if(action==='remove-file'){state.files.splice(Number(el.dataset.index),1);renderFiles();}
     if(action==='prepare-outline')await prepare('outline');
+    if(action==='inspect-visual')await prepare('inspect');
+    if(action==='save-visual'){await saveVisual();render();toast('Visual page selection saved.');}
+    if(action==='include-visual-page'){await saveVisual({doc_id:$('#visual-manual-doc').value,page:Number($('#visual-manual-page').value)});render();}
+    if(action==='skip-visual'){await saveVisual(null,true);render();toast('Visual analysis excluded. Any missing visual scope will stay visible for review.');}
+    if(action==='analyze-visual'){await saveVisual();await prepare('visual');}
     if(action==='save-outline'){await saveOutline();render();toast('Course outline saved.');}
     if(action==='add-module'){captureDraft();if(state.draft.length>=20)throw new Error('Keep this course to 20 modules or fewer.');state.draft.push({id:'m'+Date.now(),title:'New module',description:'',topics:['New topic'],prerequisites:[],scope_ids:[],source_ranges:[],scope_notes:''});render();}
     if(action==='add-range'){captureDraft();const m=state.draft.find(m=>m.id===el.dataset.module),doc=c.documents.find(d=>d.role!=='pyq');if(doc){m.source_ranges.push({doc_id:doc.id,start_page:1,end_page:1});render();}}
     if(action==='remove-range'){captureDraft();state.draft.find(m=>m.id===el.dataset.module).source_ranges.splice(Number(el.dataset.index),1);render();}
     if(action==='remove-module'){captureDraft();const removed=state.draft.splice(Number(el.dataset.index),1)[0];state.draft.forEach(x=>x.prerequisites=x.prerequisites.filter(id=>id!==removed.id));render();}
     if(action==='generate-course'){await saveOutline();await prepare('generate');}
-    if(action==='resume')await prepare(c.modules.length?'generate':'outline');
+    if(action==='resume')await prepare(c.modules.length?'generate':['inspect','visual','visual_render'].includes(c.job?.stage)?(c.job.stage==='inspect'?'inspect':'visual'):'outline');
     if(action==='open-prepared'){state.allowPrepared=c.id;goto(link(c.id));}
     if(action==='start-review')startReview(el.dataset.course);
     if(action==='flip-card'){if(state.review){state.review.flipped=!state.review.flipped;const y=scrollY;render();scrollTo(0,y);}}
@@ -268,9 +278,9 @@ document.addEventListener('submit',async event=>{
       const saved=await api(`/courses/${c.id}/extend`,{modules:[module]});
       updateCourse(saved);state.allowPrepared=null;closeModal();goto(link(c.id)+'/setup');toast('Module added. Ready to prepare only the missing content.');
     }else if(form.id==='settings-form'){
-      const data=new FormData(form);state.settings=await api('/settings',{api_key:data.get('api_key'),api_key_2:data.get('api_key_2'),api_key_3:data.get('api_key_3'),model:data.get('model'),interval:Number(data.get('interval'))});render();toast('Your connection settings are saved.');
+      const data=new FormData(form);state.settings=await api('/settings',{api_key:data.get('api_key'),api_key_2:data.get('api_key_2'),api_key_3:data.get('api_key_3'),model:data.get('model'),vision_model:data.get('vision_model'),interval:Number(data.get('interval'))});render();toast('Your connection settings are saved.');
     }else{
-      if(!state.files.length)throw new Error('Add at least one readable course PDF.');
+      if(!state.files.length)throw new Error('Add at least one course PDF.');
       if(state.files.every(f=>f.role==='pyq'))throw new Error('Add a syllabus or learning material alongside your past papers.');
       if(state.files.reduce((n,f)=>n+f.file.size,0)>75*1024*1024)throw new Error('Keep this upload below 75 MB in total.');
       button.innerHTML='<span class="spinner"></span>Reading your PDFs…';
@@ -283,6 +293,7 @@ document.addEventListener('submit',async event=>{
 
 document.addEventListener('change',async event=>{
   const el=event.target;
+  if(el.dataset.visualDoc){const button=$('[data-action="analyze-visual"]');if(button)button.disabled=!$$('[data-visual-doc]:checked').length;}
   if(el.dataset.draftScope){
     captureDraft();const m=state.draft.find(m=>m.id===el.dataset.draftScope),y=scrollY;
     addScopeRanges(m,state.current.c.scope_records.filter(r=>m.scope_ids.includes(r.id)));
