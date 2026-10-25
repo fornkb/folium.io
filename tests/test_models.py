@@ -14,6 +14,30 @@ from test_core import test_directory
 
 
 class ModelTests(unittest.TestCase):
+    def test_outline_revision_preserves_other_stage_caches_and_saved_outlines(self):
+        with test_directory() as folder, patch("configuration.environment_values", return_value={}):
+            store = Store(folder)
+            settings = Settings(folder, env_file=Path(folder) / "absent.env")
+            settings.save(dict(api_key="synthetic-key"))
+            provider = Gemini(store, settings)
+            course = store.create("Saved outline")
+            course.update(status="outline", modules=[dict(id="m1", title="Keep reviewed structure", topics=["A"], prerequisites=[])])
+            store.save(course)
+            before = store.course(course["id"])
+            raw = json.dumps(dict(candidates=[dict(finishReason="STOP", content=dict(parts=[dict(text='{"ok":true}')]))])).encode()
+            with patch("generation.urllib.request.urlopen", side_effect=lambda *a, **k: io.BytesIO(raw)) as network, patch("generation.time.sleep"):
+                for schema in (SCOPE_BATCH, OUTLINE, SCOPED_TEACHING):
+                    provider.generate("same reference data", schema)
+                self.assertEqual(3, network.call_count)
+                with patch("generation.OUTLINE_VERSION", "synthetic-new-outline-version"):
+                    for schema in (SCOPE_BATCH, OUTLINE, SCOPED_TEACHING):
+                        provider.generate("same reference data", schema)
+                    self.assertEqual(4, network.call_count)
+                    provider.generate("same reference data", OUTLINE)
+                    self.assertEqual(4, network.call_count)
+            self.assertEqual(before, store.course(course["id"]))
+            store.close()
+
     def test_defaults_and_environment_role_precedence(self):
         with test_directory() as folder, patch("configuration.environment_values", return_value={}) as environment:
             path = Path(folder) / "models.env"

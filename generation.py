@@ -13,7 +13,7 @@ from collections import Counter
 
 from core import clean, now, safe_text, validate_outline, validate_package, validate_teaching, validate_assessment
 from configuration import Settings
-from prompts import (VERSION, SYSTEM, TEACHING_SYSTEM, OUTLINE_INSTRUCTIONS,
+from prompts import (VERSION, OUTLINE_VERSION, SYSTEM, TEACHING_SYSTEM, OUTLINE_INSTRUCTIONS,
                      PLAN_INSTRUCTIONS, LESSON_INSTRUCTIONS, ASSESSMENT_INSTRUCTIONS)
 from scope import (prepare_sources, validate_batch, catalogue, catalogue_record, validate_merge,
                    records_for, ranges_for, review_outline, review_signature, module_packet, coverage,
@@ -109,7 +109,8 @@ class Gemini:
         teaching = schema in (TEACHING, SCOPED_TEACHING, PACKAGE, SCOPED_PACKAGE)
         selected_model = model or settings["model" if teaching else "task_model"]
         system = SYSTEM + ("\n\n" + TEACHING_SYSTEM if schema in (TEACHING, SCOPED_TEACHING) else "")
-        cache_identity = [VERSION, selected_model, system, prompt, schema]
+        version = OUTLINE_VERSION if schema == OUTLINE else VERSION
+        cache_identity = [version, selected_model, system, prompt, schema]
         if pdf is not None:
             if not isinstance(pdf,bytes) or not pdf.startswith(b"%PDF-") or len(pdf)>8*1024*1024:
                 raise ValueError("The visual analysis PDF is invalid or oversized.")
@@ -690,7 +691,7 @@ class Jobs:
         result = self.provider.generate(prompt, OUTLINE, validate)
         def save(c):
             c.update(modules=result["modules"], description=result["description"], status="outline",
-                     scope_exclusions=result["exclusions"], scope_review=None, generation_version=VERSION)
+                     scope_exclusions=result["exclusions"], scope_review=None, generation_version=OUTLINE_VERSION)
             c["document_coverage"] = scope_document_coverage(c, docs)
         self.store.update(cid, save)
 
