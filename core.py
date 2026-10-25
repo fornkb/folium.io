@@ -5,18 +5,51 @@ import copy
 import hashlib
 import io
 import json
+import logging
 import re
 import shutil
 import sqlite3
 import threading
 import uuid
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pypdf import PdfReader
 
 STUDY_FIELDS = ("read", "bookmarked", "notes", "attempts", "question_evidence")
+
+
+@contextmanager
+def summarized_pdf_warnings():
+    """Group one known PDF-repair warning without hiding other parser warnings.
+
+    Filters apply only to this thread's read; concurrent uploads keep their own
+    counts and unrelated logging remains unchanged.
+    """
+    class ReferenceWarnings(logging.Filter):
+        def __init__(self):
+            super().__init__()
+            self.thread = threading.get_ident()
+            self.count = 0
+
+        def filter(self, record):
+            if (record.thread == self.thread and
+                    re.fullmatch(r"Ignoring wrong pointing object \d+ \d+ \(offset \d+\)", record.getMessage())):
+                self.count += 1
+                return False
+            return True
+
+    logger = logging.getLogger("pypdf._reader")
+    grouped = ReferenceWarnings()
+    logger.addFilter(grouped)
+    try:
+        yield
+    finally:
+        logger.removeFilter(grouped)
+        if grouped.count:
+            logger.warning("PDF reader ignored %s invalid object references (repeated warnings grouped).", grouped.count)
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -230,12 +263,13 @@ class Store:
         if row:
             return dict(id=row[0], name=row[1], role=row[2], pages=json.loads(row[3]), digest=row[4])
         try:
-            reader = PdfReader(io.BytesIO(content))
-            if reader.is_encrypted and not reader.decrypt(""):
-                raise ValueError("This PDF is password protected. Upload an unlocked copy.")
-            if not 1 <= len(reader.pages) <= 600:
-                raise ValueError("Use PDFs with 600 pages or fewer for this prototype.")
-            pages = [safe_text(p.extract_text() or "").strip() for p in reader.pages]
+            with summarized_pdf_warnings():
+                reader = PdfReader(io.BytesIO(content))
+                if reader.is_encrypted and not reader.decrypt(""):
+                    raise ValueError("This PDF is password protected. Upload an unlocked copy.")
+                if not 1 <= len(reader.pages) <= 600:
+                    raise ValueError("Use PDFs with 600 pages or fewer for this prototype.")
+                pages = [safe_text(p.extract_text() or "").strip() for p in reader.pages]
         except ValueError:
             raise
         except Exception as exc:
@@ -384,7 +418,8 @@ class Store:
                     raw = z.read("documents/" + doc["id"] + ".pdf")
                     if len(raw) > 25 * 1024 * 1024 or not raw.startswith(b"%PDF-"):
                         raise ValueError("Invalid PDF in backup.")
-                    pages = [safe_text(p.extract_text() or "").strip() for p in PdfReader(io.BytesIO(raw)).pages]
+                    with summarized_pdf_warnings():
+                        pages = [safe_text(p.extract_text() or "").strip() for p in PdfReader(io.BytesIO(raw)).pages]
                     if not 1 <= len(pages) <= 600 or sum(map(len, pages)) > 3_000_000:
                         raise ValueError("Invalid page count in backup.")
                     new_id = uid()

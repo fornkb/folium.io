@@ -91,7 +91,12 @@ def strings(value, maximum=20):
     return [string(v, 500) for v in value]
 
 
-def validate_batch(value, batch):
+def anchor_warning(page):
+    return (f"An optional source quotation could not be matched to the extracted text on physical page "
+            f"{page}; it was omitted. Check important notation against the original PDF.")
+
+
+def validate_batch(value, batch, *, strict_anchors=True):
     if not isinstance(value, dict) or not isinstance(value.get("records"), list) or len(value["records"]) > 24:
         raise ValueError("The scope response needs bounded topic records.")
     expected = set(range(len(batch["segments"])))
@@ -113,7 +118,15 @@ def validate_batch(value, batch):
                       pages=sorted({batch["segments"][i]["page"] for i in refs}), segment_indexes=sorted(set(refs)))
         for key in ("subtopics", "methods", "conventions", "uncertainties"):
             result[key] = strings(record.get(key))
-        # Exact anchors are useful for unusual notation; never accept invented quotes.
+        # This metadata is created locally, never supplied by the discovery model.
+        warnings = record.get("anchor_warnings", []) if strict_anchors else []
+        if (not isinstance(warnings, list) or len(warnings) > 6 or
+                any(not isinstance(w, dict) or type(w.get("page")) is not int or w["page"] not in result["pages"]
+                    or w != dict(page=w["page"], reason=anchor_warning(w["page"])) for w in warnings)):
+            raise ValueError("Invalid saved scope anchor warning.")
+        warnings = list(warnings)
+        # Optional anchors must never become invented quotes. During discovery a
+        # failed quote is omitted and flagged for review; imports remain strict.
         anchors = record.get("anchors")
         if not isinstance(anchors, list) or len(anchors) > 6:
             raise ValueError("Invalid scope source anchors.")
@@ -124,8 +137,15 @@ def validate_batch(value, batch):
             quote = string(anchor.get("quote"), 600)
             segment = batch["segments"][anchor["segment_index"]]
             if " ".join(quote.split()) not in " ".join(segment["text"].split()):
-                raise ValueError("A scope anchor did not match the original text.")
+                if strict_anchors:
+                    raise ValueError("A scope anchor did not match the original text.")
+                warning = dict(page=segment["page"], reason=anchor_warning(segment["page"]))
+                if warning not in warnings:
+                    warnings.append(warning)
+                continue
             result["anchors"].append(dict(page=segment["page"], quote=quote))
+        if warnings:
+            result["anchor_warnings"] = warnings
         records.append(result)
     for row in decisions:
         status = row.get("status")
@@ -154,6 +174,8 @@ def records_for(scope):
 
 def catalogue_record(record):
     result = {k: record[k] for k in ("id", "title", "subtopics", "depth", "methods", "conventions", "uncertainties")}
+    if record.get("anchor_warnings"):
+        result["uncertainties"] = result["uncertainties"] + [w["reason"] for w in record["anchor_warnings"]]
     for key in ("doc_id", "role", "source_roles", "origin", "visual_warning"):
         if key in record:
             result[key] = record[key]
@@ -280,6 +302,8 @@ def coverage(scope):
                       and b["manifest"][row["index"]]["page"] == representative]
             issues += [issue for b in scope["batches"].values() if b["doc_id"] == doc["doc_id"]
                        for r in b["records"] if representative in r["pages"] for issue in r["uncertainties"]]
+            issues += [w["reason"] for b in scope["batches"].values() if b["doc_id"] == doc["doc_id"]
+                       for r in b["records"] for w in r.get("anchor_warnings", []) if w["page"] == representative]
             v=visual.get((doc["doc_id"],page["page"]))
             visual_done = v and v["status"] in ("mapped","non_teaching","blank")
             if v and v["status"] in ("partial","unresolved"):

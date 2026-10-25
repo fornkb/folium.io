@@ -118,6 +118,18 @@ class Gemini:
         cached = self.store.cached(cache_key)
         if cached is not None:
             return validator(cached)
+        # A complete response is saved before validation. On an explicit resume,
+        # try it with the current validator before spending another model call.
+        raw = self.store.cached("raw:" + cache_key)
+        if isinstance(raw, dict) and raw.get("finish_reason") in (None, "STOP"):
+            try:
+                parsed = json.loads(raw["text"])
+                value = validator(parsed)
+            except (KeyError, TypeError, ValueError):
+                pass
+            else:
+                self.store.cache(cache_key, json.loads(raw["text"]))
+                return value
         parts = [dict(text=prompt)]
         if pdf is not None:
             parts.append(dict(inlineData=dict(mimeType="application/pdf",data=base64.b64encode(pdf).decode("ascii"))))
@@ -610,7 +622,8 @@ class Jobs:
             self._status(cid, "running", "scope", f"Reading scope: {batch['name']} · batch {n+1}/{len(batches)}", n, len(batches))
             prompt = SCOPE_INSTRUCTIONS + json.dumps(dict(doc_id=batch["doc_id"], file=batch["name"], role=batch["role"],
                 segments=[dict(index=i, **segment) for i, segment in enumerate(batch["segments"])]), ensure_ascii=False)
-            result = self.provider.generate(prompt, SCOPE_BATCH, lambda value: validate_batch(value, batch))
+            result = self.provider.generate(prompt, SCOPE_BATCH,
+                                            lambda value: validate_batch(value, batch, strict_anchors=False))
             for record in result["records"]:
                 record["role"] = batch["role"]
             result.update(doc_id=batch["doc_id"], manifest=[{k: s[k] for k in ("page", "start", "end")} for s in batch["segments"]])
