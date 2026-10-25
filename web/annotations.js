@@ -68,23 +68,21 @@ function rangeSegments(range,indexes){
 const element=(tag,className,text)=>{const node=document.createElement(tag);node.className=className;if(text!==undefined)node.textContent=text;return node;};
 const sameSegments=(a,b)=>JSON.stringify(a.map(s=>[s.block,s.start,s.end,s.exact]))===JSON.stringify(b.map(s=>[s.block,s.start,s.end,s.exact]));
 
-export function mountAnnotations(root,{annotations=[],save,onError}){
+export function mountAnnotations(root,{annotations=[],save,onError,onAsk}){
   const supported=!!globalThis.CSS?.highlights&&typeof globalThis.Highlight==='function';
   const abort=new AbortController(),listen=(target,event,fn,options={})=>target.addEventListener(event,fn,{...options,signal:abort.signal});
   const indexes=new Map([...root.querySelectorAll('[data-annotation-block]')].map(el=>[el.dataset.annotationBlock,textIndex(el)]));
-  const panel=root.querySelector('[data-marks-panel]'),listRoot=root.querySelector('[data-marks-list]');
-  const toggle=root.querySelector('[data-marks-toggle]'),openButton=root.querySelector('[data-mark-selection]');
-  const status=root.querySelector('[data-marks-status]');
+  const status=element('p','annotation-status');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   let marks=annotations,painted=[],pending=[],editing=null,draftId=null,style='highlight',color='amber',busy=false,live=true,pointer=false,timer,statusTimer,lastRect=null;
   const toolbar=element('div','annotation-toolbar');toolbar.hidden=true;toolbar.setAttribute('role','toolbar');toolbar.setAttribute('aria-label','Text marking tools');
   const modes=element('div','annotation-modes');
   for(const type of styles){const button=element('button','annotation-mode',type==='highlight'?'Highlight':'Underline');button.type='button';button.dataset.markStyle=type;modes.append(button);}
+  const ask=element('button','annotation-ask','Ask Folio');ask.type='button';ask.hidden=typeof onAsk!=='function';modes.append(ask);
   const close=element('button','annotation-close','×');close.type='button';close.setAttribute('aria-label','Close text marking tools');modes.append(close);
   const palette=element('div','annotation-palette');
   for(const shade of COLORS){const button=element('button',`annotation-swatch ${shade}`);button.type='button';button.dataset.markColor=shade;button.title=names[shade];button.append(element('span',''));palette.append(button);}
   const remove=element('button','annotation-remove','Remove');remove.type='button';palette.append(remove);
-  toolbar.append(modes,palette);document.body.append(toolbar);
-  if(!supported){openButton.hidden=true;root.querySelector('[data-mark-help]').textContent='Saved marks are listed below. Update your browser to mark lesson text.';}
+  toolbar.append(modes,palette,status);document.body.append(toolbar);
 
   function announce(text,error=false){if(!live)return;clearTimeout(statusTimer);status.textContent=text;status.classList.toggle('error',error);if(!error)statusTimer=setTimeout(()=>{if(live)status.textContent='';},3500);}
   function dismiss(focus=false){toolbar.hidden=true;editing=null;draftId=null;pending=[];if(focus){root.tabIndex=-1;root.focus({preventScroll:true});}}
@@ -97,7 +95,7 @@ export function mountAnnotations(root,{annotations=[],save,onError}){
     toolbar.style.top=`${Math.max(top+8,Math.min(top+h-height-8,y))}px`;
   }
   function controls(){
-    for(const button of toolbar.querySelectorAll('button'))button.disabled=busy;
+    for(const button of toolbar.querySelectorAll('button'))button.disabled=busy||(!supported&&(button.dataset.markStyle||button.dataset.markColor||button===remove));
     for(const button of modes.querySelectorAll('[data-mark-style]'))button.setAttribute('aria-pressed',String(button.dataset.markStyle===style));
     for(const button of palette.querySelectorAll('[data-mark-color]')){
       button.setAttribute('aria-pressed',String(button.dataset.markColor===color));
@@ -106,7 +104,7 @@ export function mountAnnotations(root,{annotations=[],save,onError}){
     remove.hidden=!editing;
   }
   function show(segments,rect,mark=null,focus=false){
-    if(!supported||busy||!segments.length)return;
+    if(busy||!segments.length)return;
     if(!sameSegments(pending,segments))draftId=null;
     pending=segments;editing=mark;if(mark)draftId=mark.id;
     if(mark){style=mark.style;color=mark.color;}
@@ -114,7 +112,7 @@ export function mountAnnotations(root,{annotations=[],save,onError}){
     if(focus)modes.querySelector(`[data-mark-style="${style}"]`).focus({preventScroll:true});
   }
   function selected(focus=false){
-    if(!supported||busy)return false;
+    if(busy)return false;
     if(document.activeElement?.closest('input,textarea,[contenteditable="true"]'))return false;
     const selection=getSelection();
     if(!selection?.rangeCount||selection.isCollapsed)return false;
@@ -140,42 +138,32 @@ export function mountAnnotations(root,{annotations=[],save,onError}){
     for(const mark of marks){const ranges=markRanges(mark);painted.push({mark,ranges});
       if(!supported)continue;const name=key(mark.style,mark.color);if(!groups.has(name))groups.set(name,[]);groups.get(name).push(...ranges.map(r=>r.range));}
     if(supported)for(const [name,ranges] of groups)CSS.highlights.set(name,new Highlight(...ranges));
-    toggle.querySelector('span').textContent=String(marks.length);
-    listRoot.replaceChildren();
-    if(!marks.length){listRoot.append(element('p','muted','Your highlights and underlines will appear here.'));return;}
-    for(const {mark,ranges} of painted){
-      const row=element('div','annotation-list-item'),preview=element('button','annotation-preview');preview.type='button';
-      preview.append(element('span',`annotation-label ${mark.color}`,`${names[mark.color]} ${mark.style}`),element('span','annotation-quote',mark.segments.map(s=>s.exact).join(' … ')));
-      preview.disabled=!supported||!ranges.length;preview.setAttribute('aria-label',`Edit ${mark.color} ${mark.style}: ${mark.segments.map(s=>s.exact).join(' ').slice(0,100)}`);
-      if(!ranges.length)row.append(element('p','annotation-unplaced','Original text changed. This mark is kept here for reference.'));
-      const trash=element('button','text-btn annotation-list-remove','Remove');trash.type='button';trash.setAttribute('aria-label',`Remove ${mark.color} ${mark.style}`);
-      preview.addEventListener('click',()=>{const index=indexes.get(mark.segments[0].block);index.element.scrollIntoView({block:'center',behavior:'instant'});show(mark.segments,ranges[0].range.getBoundingClientRect(),mark,true);},{signal:abort.signal});
-      trash.addEventListener('click',()=>removeMark(mark),{signal:abort.signal});row.prepend(preview);row.append(trash);listRoot.append(row);
-    }
   }
   async function persist(operation){
-    if(busy)return;const listFocus=listRoot.contains(document.activeElement),toolbarFocus=toolbar.contains(document.activeElement);busy=true;controls();announce('Saving mark…');
+    if(busy)return;const toolbarFocus=toolbar.contains(document.activeElement);busy=true;controls();announce('Saving mark…');
     try{const saved=await save(operation);if(!live)return;marks=saved;paint();getSelection()?.removeAllRanges();
-      if(operation.operation==='delete'){dismiss(toolbarFocus);if(listFocus)toggle.focus({preventScroll:true});}
+      if(operation.operation==='delete'){dismiss(toolbarFocus);}
       else{editing=marks.find(m=>m.id===operation.annotation.id);pending=editing?.segments||[];toolbar.hidden=false;const range=painted.find(p=>p.mark.id===editing?.id)?.ranges[0]?.range;position(range?.getBoundingClientRect());}
       announce(operation.operation==='delete'?'Mark removed.':'Mark saved.');}
     catch(error){announce('Your mark could not be saved. Try again.',true);onError(error);}
     finally{busy=false;if(live){controls();if(toolbarFocus&&!toolbar.hidden)modes.querySelector(`[data-mark-style="${style}"]`).focus({preventScroll:true});}}
   }
   function apply(type=style,shade=color){
-    if(!pending.length||busy)return;style=type;color=shade;
+    if(!supported||!pending.length||busy)return;style=type;color=shade;
     const id=editing?.id||(draftId??=crypto.randomUUID().replaceAll('-',''));
     return persist({operation:'upsert',annotation:{id,style,color,segments:pending}});
   }
   function removeMark(mark=editing){if(mark&&!busy)return persist({operation:'delete',id:mark.id});}
   listen(toolbar,'pointerdown',event=>event.preventDefault());
-  listen(openButton,'pointerdown',event=>event.preventDefault());
-  listen(openButton,'click',()=>{if(!selected(true))announce('Select some lesson text first, then choose Mark selection.',true);});
   listen(toolbar,'click',event=>{const button=event.target.closest('button');if(!button)return;
-    if(button===close)dismiss(true);else if(button===remove)removeMark();
+    if(button===ask){
+      const text=pending.map(segment=>segment.exact).join(' … ');
+      const anchor=pending.find(segment=>/^(section|heading|lesson):\d+$/.test(segment.block));
+      const index=anchor?Number(anchor.block.split(':')[1]):0;
+      try{onAsk({text,index});getSelection()?.removeAllRanges();dismiss();}catch(error){announce(error.message,true);}
+    }else if(button===close)dismiss(true);else if(button===remove)removeMark();
     else if(button.dataset.markStyle)apply(button.dataset.markStyle);else if(button.dataset.markColor)apply(style,button.dataset.markColor);
   });
-  listen(toggle,'click',()=>{panel.hidden=!panel.hidden;toggle.setAttribute('aria-expanded',String(!panel.hidden));});
   listen(root,'pointerdown',()=>{pointer=true;});
   listen(document,'pointerup',event=>{const wasPointer=pointer;pointer=false;
     if(!wasPointer||busy)return;

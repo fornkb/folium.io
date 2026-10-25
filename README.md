@@ -7,7 +7,7 @@ A local-first study companion that turns your course PDFs into a connected cours
 - Review and edit an AI-proposed syllabus before preparing lessons.
 - Explore modules and prerequisites on a course map with zoom, pan, and progress indicators.
 - Study focused lessons with worked examples and offline mathematical typesetting.
-- Ask an optional Groq tutor beside a lesson, attach selected text, and save useful replies into notes. Conversations are saved locally and included in course backups.
+- Ask Folio, an optional Groq study companion, beside a lesson, attach selected text, and save useful replies into notes. Conversations are saved locally and included in course backups.
 - Open citations at the original PDF page, with both image and extracted-text views.
 - Prepare practice and revision cards separately from saved teaching, then study them offline.
 - Practise objective questions with instant scoring, or reveal solutions for subjective questions.
@@ -27,9 +27,9 @@ Open [Folium](http://127.0.0.1:8765) in your browser. On Windows, you can also u
 
 A fresh installation starts with an empty library. Sample courses and personal course materials are not distributed in the repository.
 
-### Optional lesson tutor
+### Optional Folio study companion
 
-Open a saved module's Study guide and choose **Ask tutor** in the left panel. On smaller screens use the **Ask tutor** button to open its drawer. The panel shares Folium's light/dark theme. Select a passage and click **Ask about selection**, or use **Ask about this section**. Choose the focused lesson explicitly; conversations are kept separate for each lesson. Shortcuts fill the question box for review before sending. Ctrl/Command + Enter sends a question.
+Open a saved module's Study guide and click the small animated **Folio** icon at the bottom right. Folio opens in a floating window on the right; the reader and contents keep their normal space when it is closed. On a phone it opens as a dialog. Select a passage (including a worked example) and choose **Ask Folio** alongside Highlight and Underline. The passage is attached as extra context; type your question separately, then press Send or Ctrl/Command + Enter. You can remove or replace the attached passage before sending. Selection alone never starts inference. Conversations are saved per focused lesson and available under **Conversations**. The character is provisional pending selection between Sprout, Bookling and Acorn; animations respect reduced-motion preferences.
 
 Configure a separate Groq key and chat model in Settings, or add `GROQ_API_KEY` and optionally `GROQ_MODEL` to `.env`. The default model ID is `openai/gpt-oss-120b`; select a model available to your account. Folium makes one streaming chat-completion request per explicitly sent question, with no automatic retry or provider fallback. Groq account limits and charges may apply. No embedding service, hosted retrieval database, or additional Python package is required.
 
@@ -77,9 +77,9 @@ The server listens on `127.0.0.1` only. The default port is `8765`; `FOLIUM_PORT
 
 The ready-module map has its own saved URL and survives browser reloads. Unfinished modules lead to preparation; a progress notice shows background work and provides a way back to setup. New module arrivals and completion update the reader's status without replacing its teaching or notes editor.
 
-Select text in a saved study guide to open personal **Highlight** and **Underline** tools. Choose muted amber, sage, blue or rose; highlights use 20–24% background opacity, while underlines use a clearer two-pixel stroke. Click an existing mark to recolour it or change its style. **Your marks** lists passages for revisiting, editing and removal. **Mark selection** provides keyboard access; Alt+Shift+H highlights and Alt+Shift+U underlines a selection. Marks save locally without AI calls, remain separate from generated lesson text, and travel with course exports and recovery backups.
+Select text in a saved study guide to open **Highlight**, **Underline**, and **Ask Folio**. Choose muted amber, sage, blue or rose. **Settings → Highlight opacity** adjusts background opacity from 5–70%, with an immediate preview; the default is 24%. This preference is saved in the current browser, like the light/dark appearance. Only the highlight paint changes: text stays opaque and underlines keep their two-pixel stroke. Click an existing mark to recolour, change style or remove it. Keyboard selections open the same toolbar; Alt+Shift+H highlights and Alt+Shift+U underlines. Marks save locally without AI calls, remain separate from generated lesson text, and travel with course exports and recovery backups. The reader has no permanent marking toolbar or mark list; stored marks that cannot be reattached remain in backups.
 
-Text marks cover lesson overviews, objectives, headings and teaching passages, including text around rendered mathematics. This initial feature uses the browser's [CSS Custom Highlight API](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API); older browsers can read the saved-mark list but need an update to paint or create marks. Anchors retain exact wording and nearby context. A changed or ambiguous passage is kept in the list for reference instead of guessing a new location. Each module supports up to 500 marks within a 400 KB storage bound; one selection can cover up to 16 text blocks and 12,000 UTF-16 units. Annotation operations update compact study state, and responses include only changed study fields to avoid a delayed notes response overwriting newer marks.
+Text marks cover lesson overviews, objectives, headings and teaching passages, including text around rendered mathematics. This initial feature uses the browser's [CSS Custom Highlight API](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API); older browsers need an update to paint or create marks; selection-to-Folio remains available. Anchors retain exact wording and nearby context. A changed or ambiguous passage retains its stored mark without guessing a new paint location. Each module supports up to 500 marks within a 400 KB storage bound; one selection can cover up to 16 text blocks and 12,000 UTF-16 units. Annotation operations update compact study state, and responses include only changed study fields to avoid a delayed notes response overwriting newer marks.
 
 **Delete course** is available on library cards and course pages. Confirming deletion first saves a complete recovery ZIP in `data/backups`, then removes the course, document records, study state, summaries, original workspace PDFs, and derived previews. The deletion notice links to the recovery download; restore it with **Import course**. Deletion is blocked while a preparation job is active, and a failed recovery backup leaves the course intact. Existing backups and the shared provider-response cache remain local; deletion removes the active workspace rather than erasing every historical copy.
 
@@ -124,7 +124,7 @@ Text extraction, local visual inspection and PDF previews run on your computer. 
 - AI-generated practice and past-paper solutions are labeled. Uploaded-paper frequency reflects the papers you provided and does not predict future exams.
 - Objective answers use saved answer keys and deterministic scoring. Subjective questions provide solutions for self-review, without automatic grading.
 - Recall estimates depend on distinct answered questions, topic coverage, and first-encounter/recent results. Repeating a small question bank does not establish mastery.
-- This local prototype has no accounts, live tutor chat, cloud synchronization, or hosted multi-user service.
+- This local prototype has no accounts, cloud synchronization, or hosted multi-user service.
 
 ## Development
 

@@ -65,7 +65,7 @@ assert.match(scopeForm,/&lt;script&gt;unsafe/);
 assert.doesNotMatch(scopeForm,/<(?:script|img)\b/);
 const scopeGuide=studyGuide(scopedCourse,{...scopedModule,package:{overview:'Overview',objectives:['Learn'],teaching_mode:'approved_scope',topic_locations:scopedModule.source_ranges,sections:[{title:'Explanation',body:'Generated explanation',kind:'concept',sources:[],provenance:'generated'},{title:'Quoted text',body:'Original words',kind:'concept',sources:[{doc_id:'doc',page:1}],provenance:'source_excerpt'}]}});
 assert.match(scopeGuide,/Topic locations in the original materials/);
-assert.match(scopeGuide,/Generated teaching · explanations/);
+assert.doesNotMatch(scopeGuide,/Generated teaching · explanations|Mark selection|Your marks|Select text to highlight/);
 assert.match(scopeGuide,/Original source excerpt · quoted/);
 assert.match(scopeGuide,/do not verify every explanation/);
 assert.equal((scopeGuide.match(/aria-label="Source references"/g)||[]).length,1);

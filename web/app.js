@@ -1,12 +1,13 @@
 import * as UI from './ui.js';
 import {mountAnnotations} from './annotations.js';
 import {mountTutor} from './tutor.js';
+import {highlightOpacity,applyHighlightOpacity} from './appearance.js';
 const {esc,icon,link,enc}=UI;
 const $=(s,root=document)=>root.querySelector(s);
 const $$=(s,root=document)=>[...root.querySelectorAll(s)];
 const state={courses:[],settings:{has_key:false,model:'gemini-3.8-flash',task_model:'gemini-3.5-flash-lite',vision_model:'gemini-3.5-flash-lite',interval:6},view:'graph',zoom:null,
   files:[],draft:[],draftCid:null,scopeExclusions:[],scopeGapsAccepted:false,review:null,quizzes:{},theme:localStorage.getItem('folium-theme')||'light',
-  current:{},allowPrepared:null,previousRoute:'',notesPending:null,lastDeletion:null};
+  highlightOpacity:highlightOpacity(localStorage.getItem('folium-highlight-opacity')),current:{},allowPrepared:null,previousRoute:'',notesPending:null,lastDeletion:null};
 let toastTimer,notesTimer,lastFocus,notesFlight=null;
 let annotationReader=null;
 let lessonTutor=null;
@@ -63,8 +64,8 @@ function render(){
   annotationReader?.destroy();annotationReader=null;
   const openScopeDetails=$$('details[data-scope-detail][open]').map(d=>d.dataset.scopeDetail);
   const r=route();let body,title='My courses',active='courses',cid=null;
-  state.current={};document.body.classList.toggle('dark',state.theme==='dark');
-  if(r[0]==='settings'){body=UI.settingsView(state.settings,state.theme);title='Settings';active='settings';}
+  state.current={};document.body.classList.toggle('dark',state.theme==='dark');applyHighlightOpacity(state.highlightOpacity);
+  if(r[0]==='settings'){body=UI.settingsView(state.settings,state.theme,state.highlightOpacity);title='Settings';active='settings';}
   else if(r[0]==='new'){body=UI.createView();title='Create a course';}
   else if(r[0]==='revision'){
     active='revision';title='Revision';body=r[1]==='review'?UI.flashcard(state.review):UI.revision(state.courses);
@@ -105,7 +106,7 @@ function render(){
   $('#app').innerHTML=shell(body,title,active,cid);
   if(state.current.tab==='study'&&state.current.m?.package&&$('.lesson-paper')){
     const cid=state.current.c.id,mid=state.current.m.id;
-    annotationReader=mountAnnotations($('.lesson-paper'),{annotations:state.current.m.annotations||[],onError:error=>toast(error.message,true),
+    annotationReader=mountAnnotations($('.lesson-paper'),{annotations:state.current.m.annotations||[],onError:error=>toast(error.message,true),onAsk:selection=>lessonTutor?.attachSelection(selection),
       save:async operation=>{
         const value=await api(`/courses/${cid}/modules/${enc(mid)}/annotations`,operation,{keepalive:true});
         const course=updateCourse(value.course),marks=course?.modules.find(m=>m.id===mid)?.annotations||[];
@@ -393,6 +394,11 @@ document.addEventListener('change',async event=>{
   }
 });
 document.addEventListener('input',event=>{
+  if(event.target.id==='highlight-opacity'){
+    state.highlightOpacity=applyHighlightOpacity(event.target.value);
+    localStorage.setItem('folium-highlight-opacity',String(state.highlightOpacity));
+    $('#highlight-opacity-value').textContent=state.highlightOpacity+'%';
+  }
   if(event.target.id==='source-page')changeSourcePage(event.target);
   if(event.target.id==='search-input')searchResults(event.target.value);
   if(event.target.id==='module-notes'){

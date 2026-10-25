@@ -13,7 +13,7 @@ import urllib.request
 from core import clean, now, safe_text
 
 MAX_ANSWER = 24000
-SYSTEM = r"""You are Folium's patient study tutor. Help the student understand the supplied
+SYSTEM = r"""You are Folio, Folium's patient study companion. Help the student understand the supplied
 saved lesson at the level and using the notation of their course. Explain reasoning,
 walk through examples, create fresh examples, or ask a short check question as requested.
 Use general knowledge to teach within this scope. Distinguish your new examples and
