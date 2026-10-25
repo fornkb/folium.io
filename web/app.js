@@ -1,5 +1,6 @@
 import * as UI from './ui.js';
 import {mountAnnotations} from './annotations.js';
+import {mountTutor} from './tutor.js';
 const {esc,icon,link,enc}=UI;
 const $=(s,root=document)=>root.querySelector(s);
 const $$=(s,root=document)=>[...root.querySelectorAll(s)];
@@ -8,6 +9,7 @@ const state={courses:[],settings:{has_key:false,model:'gemini-3.8-flash',task_mo
   current:{},allowPrepared:null,previousRoute:'',notesPending:null,lastDeletion:null};
 let toastTimer,notesTimer,lastFocus,notesFlight=null;
 let annotationReader=null;
+let lessonTutor=null;
 
 async function api(path,body,extra={}){
   const options=body===undefined?{}:body instanceof FormData?{method:'POST',body}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
@@ -57,6 +59,7 @@ function shell(body,pageTitle='My courses',active='courses',cid=null){
 }
 
 function render(){
+  lessonTutor?.destroy();lessonTutor=null;
   annotationReader?.destroy();annotationReader=null;
   const openScopeDetails=$$('details[data-scope-detail][open]').map(d=>d.dataset.scopeDetail);
   const r=route();let body,title='My courses',active='courses',cid=null;
@@ -108,6 +111,18 @@ function render(){
         const course=updateCourse(value.course),marks=course?.modules.find(m=>m.id===mid)?.annotations||[];
         if(state.current.c?.id===cid&&state.current.m?.id===mid)annotationReader?.refresh(marks);
         return marks;
+      }});
+  }
+  if(state.current.tab==='study'&&state.current.m?.package&&$('.study-layout')){
+    const cid=state.current.c.id,mid=state.current.m.id;
+    lessonTutor=mountTutor($('.study-layout'),{course:state.current.c,module:state.current.m,settings:state.settings,api,onError:error=>toast(error.message,true),
+      onNote:async text=>{
+        await flushNotes();
+        const module=state.courses.find(c=>c.id===cid)?.modules.find(m=>m.id===mid);
+        if(!module)throw new Error('This module is no longer available.');
+        const notes=(module.notes||'')+text;
+        if(notes.length>30000)throw new Error('Your notes are full. Shorten them before saving this reply.');
+        const value=await api(`/courses/${cid}/modules/${enc(mid)}/progress`,{notes});updateCourse(value.course);toast('Tutor reply saved to your notes.');
       }});
   }
   for(const id of openScopeDetails){const detail=$(`details[data-scope-detail="${CSS.escape(id)}"]`);if(detail)detail.open=true;}
@@ -317,6 +332,7 @@ document.addEventListener('click',async event=>{
       const value=await api(`/courses/${item.cid}/modules/${enc(item.mid)}/review`,{index:item.index,rating:el.dataset.rating});updateCourse(value.course);session.pos++;session.flipped=false;render();
     }
     if(action==='theme'){state.theme=el.dataset.theme;localStorage.setItem('folium-theme',state.theme);render();}
+    if(action==='clear-groq-key'){state.settings=await api('/settings',{clear_groq_key:true});render();toast('Saved Groq key removed.');}
     if(action==='clear-key'){
       const slot=Number(el.dataset.slot||1),field=slot===1?'clear_key':`clear_key_${slot}`;
       state.settings=await api('/settings',{[field]:true});render();toast(`Saved key ${slot} removed.`);
@@ -335,7 +351,7 @@ document.addEventListener('submit',async event=>{
       const saved=await api(`/courses/${c.id}/extend`,{modules:[module]});
       updateCourse(saved);state.allowPrepared=null;closeModal();goto(link(c.id)+'/setup');toast('Module added. Ready to prepare only the missing content.');
     }else if(form.id==='settings-form'){
-      const data=new FormData(form);state.settings=await api('/settings',{api_key:data.get('api_key'),api_key_2:data.get('api_key_2'),api_key_3:data.get('api_key_3'),model:data.get('model'),task_model:data.get('task_model'),vision_model:data.get('vision_model'),interval:Number(data.get('interval'))});render();toast('Your connection settings are saved.');
+      const data=new FormData(form);state.settings=await api('/settings',{api_key:data.get('api_key'),api_key_2:data.get('api_key_2'),api_key_3:data.get('api_key_3'),model:data.get('model'),task_model:data.get('task_model'),vision_model:data.get('vision_model'),interval:Number(data.get('interval')),groq_api_key:data.get('groq_api_key'),groq_model:data.get('groq_model')});render();toast('Your connection settings are saved.');
     }else{
       if(!state.files.length)throw new Error('Add at least one course PDF.');
       if(state.files.every(f=>f.role==='pyq'))throw new Error('Add a syllabus or learning material alongside your past papers.');

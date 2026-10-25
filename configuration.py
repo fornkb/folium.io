@@ -12,7 +12,7 @@ from core import clean
 API_KEY_FIELDS = ("api_key", "api_key_2", "api_key_3")
 KEY_ENV_NAMES = tuple(("GEMINI_API_KEY" + suffix, "GOOGLE_API_KEY" + suffix)
                       for suffix in ("", "_2", "_3"))
-CONFIG_KEYS = tuple(name for names in KEY_ENV_NAMES for name in names) + ("GEMINI_MODEL", "GEMINI_TASK_MODEL", "GEMINI_VISION_MODEL", "FOLIUM_PORT")
+CONFIG_KEYS = tuple(name for names in KEY_ENV_NAMES for name in names) + ("GEMINI_MODEL", "GEMINI_TASK_MODEL", "GEMINI_VISION_MODEL", "FOLIUM_PORT", "GROQ_API_KEY", "GROQ_MODEL")
 
 
 def environment_values():
@@ -111,6 +111,11 @@ class Settings:
         value["model"] = value.get("model") or external.get("GEMINI_MODEL") or "gemini-3.8-flash"
         value["task_model"] = value.get("task_model") or external.get("GEMINI_TASK_MODEL") or "gemini-3.5-flash-lite"
         value["vision_model"] = value.get("vision_model") or external.get("GEMINI_VISION_MODEL") or value["task_model"]
+        saved_groq = str(value.get("groq_api_key") or "").strip()
+        value["groq_api_key"] = saved_groq or external.get("GROQ_API_KEY", "")
+        value["groq_model"] = value.get("groq_model") or external.get("GROQ_MODEL") or "openai/gpt-oss-120b"
+        value["groq_key_source"] = "settings" if saved_groq else sources.get("GROQ_API_KEY")
+        value["groq_has_saved_key"] = bool(saved_groq)
         value.setdefault("interval", 6)
         return value
 
@@ -119,7 +124,9 @@ class Settings:
         return dict(has_key=bool(value["api_keys"]), model=value["model"], task_model=value["task_model"], vision_model=value["vision_model"], interval=value["interval"],
                     key_source=value["key_source"], has_saved_key=value["has_saved_key"],
                     key_count=len(value["api_keys"]), key_slots=value["key_slots"],
-                    env_file_found=self.env_file.is_file())
+                    env_file_found=self.env_file.is_file(), groq_has_key=bool(value["groq_api_key"]),
+                    groq_model=value["groq_model"], groq_key_source=value["groq_key_source"],
+                    groq_has_saved_key=value["groq_has_saved_key"])
 
     def save(self, body):
         effective = self.get()
@@ -133,6 +140,9 @@ class Settings:
         if not re.fullmatch(r"gemini-[a-zA-Z0-9.\-]+",vision_model):
             raise ValueError("Enter a valid Gemini visual model name.")
         interval = max(3, min(60, int(body.get("interval", effective["interval"]))))
+        groq_model = clean(body.get("groq_model", effective["groq_model"]), 100)
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9./_-]{0,99}", groq_model):
+            raise ValueError("Enter a valid Groq model ID.")
         with self.lock:
             # Save only explicit settings. Never copy an external key into this file.
             saved = self._saved()
@@ -147,6 +157,12 @@ class Settings:
                 saved["task_model"] = task_model
             if "vision_model" in body:
                 saved["vision_model"] = vision_model
+            if clean(body.get("groq_api_key"), 300):
+                saved["groq_api_key"] = clean(body["groq_api_key"], 300)
+            if body.get("clear_groq_key"):
+                saved.pop("groq_api_key", None)
+            if "groq_model" in body:
+                saved["groq_model"] = groq_model
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(saved), "utf-8")
             tmp.replace(self.path)

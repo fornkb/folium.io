@@ -7,6 +7,7 @@ A local-first study companion that turns your course PDFs into a connected cours
 - Review and edit an AI-proposed syllabus before preparing lessons.
 - Explore modules and prerequisites on a course map with zoom, pan, and progress indicators.
 - Study focused lessons with worked examples and offline mathematical typesetting.
+- Ask an optional Groq tutor beside a lesson, attach selected text, and save useful replies into notes. Conversations are saved locally and included in course backups.
 - Open citations at the original PDF page, with both image and extracted-text views.
 - Prepare practice and revision cards separately from saved teaching, then study them offline.
 - Practise objective questions with instant scoring, or reveal solutions for subjective questions.
@@ -25,6 +26,16 @@ python app.py
 Open [Folium](http://127.0.0.1:8765) in your browser. On Windows, you can also use `start.bat` after installing the dependencies. Keep the server running while using the app. Closing it leaves your saved courses on disk.
 
 A fresh installation starts with an empty library. Sample courses and personal course materials are not distributed in the repository.
+
+### Optional lesson tutor
+
+Open a saved module's Study guide and choose **Ask tutor** in the left panel. On smaller screens use the **Ask tutor** button to open its drawer. The panel shares Folium's light/dark theme. Select a passage and click **Ask about selection**, or use **Ask about this section**. Choose the focused lesson explicitly; conversations are kept separate for each lesson. Shortcuts fill the question box for review before sending. Ctrl/Command + Enter sends a question.
+
+Configure a separate Groq key and chat model in Settings, or add `GROQ_API_KEY` and optionally `GROQ_MODEL` to `.env`. The default model ID is `openai/gpt-oss-120b`; select a model available to your account. Folium makes one streaming chat-completion request per explicitly sent question, with no automatic retry or provider fallback. Groq account limits and charges may apply. No embedding service, hosted retrieval database, or additional Python package is required.
+
+Questions send the selected passage, saved focused lesson (up to 36,000 characters of section text), bounded overview/reviewed conventions, and up to 18,000 characters of recent conversation to Groq. Larger lessons use locally ranked section excerpts and show **partial** context; older chat history can be omitted. The tutor can add explanations and examples and flag possible lesson errors. It does not receive original PDFs, perform web searches, or verify mathematical correctness. Its section links are navigation to supplied teaching, not PDF evidence. Answers are rendered with the reader's escaped Markdown and untrusted-input math renderer.
+
+Opening the panel, switching conversations, rereading saved replies, saving to notes, and ordinary study make no AI requests. Complete replies are saved in SQLite before completion is reported. Partial replies are checkpointed during streaming and retained on errors/disconnects; a server restart marks unfinished replies as interrupted. Use **Reload saved conversation** after a connection problem. Repeated submissions with the same request ID reuse their saved outcome; **Ask again** explicitly starts a fresh request. Conversation history is backed up and restored with courses, with new conversation/request identities on import. Limits are 200 turns per conversation and 2,000 per course. Live model answer quality has not been evaluated; automated and browser checks use synthetic material and a simulated provider.
 
 ### Connect Gemini
 

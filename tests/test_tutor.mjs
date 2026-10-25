@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {readTutorStream,turnView,lessonOptions,tutorSettings} from '../web/tutor.js';
+
+const module={title:'<script>course</script>',package:{sections:[{title:'Core concept',body:'A',lesson_id:'l1',lesson_title:'Lesson one'},{title:'Worked example',body:'B',lesson_id:'l2',lesson_title:'Lesson two'}]}};
+assert.deepEqual(lessonOptions(module).map(l=>l.id),['l1','l2']);
+const turn={id:'a'.repeat(32),question:'<img src=x onerror=evil()>',answer:'**Reasoning**\n\n<script>evil()</script>',selection:'<svg onload=evil()>',status:'complete',context:{complete:true,sections:[{index:0,title:'Core concept'},{index:99,title:'Invented link'}]}};
+const html=turnView(turn,module);
+assert.doesNotMatch(html,/<script>|<img|<svg onload|data-tutor-section="99"/);
+assert.match(html,/data-tutor-section="0"/);
+assert.match(html,/<strong>Reasoning<\/strong>/);
+assert.doesNotMatch(tutorSettings({groq_model:'" onfocus="evil()'}),/value="" onfocus/);
+const events=[{event:'start',turn:{answer:'',question:'λ'}},{event:'delta',text:'λ✨'},{event:'done',turn:{answer:'λ✨'}}];
+const bytes=new TextEncoder().encode(events.map(e=>JSON.stringify(e)+'\n').join(''));
+const received=[];
+const stream=new ReadableStream({start(controller){for(const byte of bytes)controller.enqueue(Uint8Array.of(byte));controller.close();}});
+await readTutorStream(new Response(stream,{headers:{'Content-Type':'application/x-ndjson'}}),event=>received.push(event));
+assert.deepEqual(received,events);
+await assert.rejects(readTutorStream(new Response('{"event":"delta","text":"partial"}\n',{headers:{'Content-Type':'application/x-ndjson'}}),()=>{}),/ended early/);
+await assert.rejects(readTutorStream(new Response('{"error":"Connect Groq"}',{status:400,headers:{'Content-Type':'application/json'}}),()=>{}),/Connect Groq/);
+console.log('Tutor rendering escapes untrusted text, validates lesson links and handles split UTF-8 streaming.');

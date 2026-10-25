@@ -11,7 +11,7 @@ from email import policy
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlparse, parse_qs
 
 from core import Store, clean, grade, module_state, review_card, validate_outline, safe_text, assessment_evidence
 from generation import Gemini, Jobs, Settings, scope_document_coverage
@@ -19,6 +19,7 @@ from scope import review_outline, review_signature, coverage, module_packet
 from visual import select_pages, page_results, analysis_batches
 from configuration import configured_values, env_path
 from pdfview import render_page
+from tutor import Tutor
 
 ROOT = Path(__file__).resolve().parent
 MAX_BODY = 80 * 1024 * 1024
@@ -28,6 +29,7 @@ def create_server(data_dir, port=8765, env_file=None):
     store = Store(data_dir)
     settings = Settings(store.root, env_file=env_file)
     jobs = Jobs(store, Gemini(store, settings))
+    tutor = Tutor(store, settings)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "Folium/1.0"
@@ -60,6 +62,23 @@ def create_server(data_dir, port=8765, env_file=None):
             origin = self.headers.get("Origin")
             if origin and origin not in (f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"):
                 raise PermissionError("This action must come from your local Folium app.")
+
+        def tutor_stream(self, events):
+            # Validate and claim the request before sending streaming headers.
+            first = next(events)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            try:
+                self.wfile.write((json.dumps(first)+"\n").encode());self.wfile.flush()
+                for event in events:
+                    self.wfile.write((json.dumps(event)+"\n").encode());self.wfile.flush()
+            finally:
+                events.close()
 
         def body(self):
             length = int(self.headers.get("Content-Length", 0))
@@ -109,6 +128,10 @@ def create_server(data_dir, port=8765, env_file=None):
                         return self.send(200, settings.public())
                     if path == "/api/courses":
                         return self.send(200, store.summaries())
+                    match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/modules/([^/]+)/tutor", path)
+                    if match:
+                        query = parse_qs(urlparse(self.path).query)
+                        return self.send(200, tutor.history(match[1],match[2],query.get("lesson",[None])[0],query.get("thread",[None])[0]))
                     match = re.fullmatch(r"/api/recovery/([a-f0-9]{16}-deleted-[a-f0-9]{16}\.folium\.zip)", path)
                     if match:
                         target = (store.root / "backups" / match[1]).resolve()
@@ -180,6 +203,9 @@ def create_server(data_dir, port=8765, env_file=None):
                 body = self.body()
                 if path == "/api/settings":
                     return self.send(200, settings.save(body))
+                match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/modules/([^/]+)/tutor", path)
+                if match:
+                    return self.tutor_stream(tutor.answer(match[1],match[2],body))
                 if path == "/api/import":
                     _, files = body
                     if len(files) != 1:
@@ -225,7 +251,15 @@ def create_server(data_dir, port=8765, env_file=None):
                     if action == "delete":
                         if body.get("confirm") != cid:
                             raise ValueError("Confirm the course you want to delete.")
-                        return self.send(200, jobs.delete_course(cid))
+                        # Keep the same jobs -> store lock order as preparation,
+                        # and prevent a tutor turn starting between check/deletion.
+                        with jobs.lock, store.lock:
+                            if cid in jobs.active:
+                                raise ValueError("Preparation is still running. Delete the course after it finishes or pauses.")
+                            if any(store.db.execute("SELECT 1 FROM tutor_turns WHERE id=? AND course_id=?",(tid,cid)).fetchone() for tid in tutor.active):
+                                raise ValueError("Wait for the tutor reply to finish before deleting this course.")
+                            deleted = store.delete_course(cid)
+                        return self.send(200, deleted)
                     if action=="visual":
                         if cid in jobs.active or course.get("scope") or course["modules"]:
                             raise ValueError("Visual selection is locked once scope preparation starts.")
@@ -296,7 +330,7 @@ def create_server(data_dir, port=8765, env_file=None):
                 self.send(500, dict(error="Something could not be saved. Please try again."))
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.store, server.settings, server.jobs = store, settings, jobs
+    server.store, server.settings, server.jobs, server.tutor = store, settings, jobs, tutor
     return server
 
 

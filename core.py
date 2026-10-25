@@ -92,6 +92,8 @@ class Store:
         """)
         self.db.commit()
         self._repair_extraction()
+        from tutor import initialize
+        initialize(self)
 
     def _repair_extraction(self):
         changes, stats = [], []
@@ -309,12 +311,13 @@ class Store:
             self.db.execute("INSERT OR REPLACE INTO cache VALUES (?,?)", (key, json.dumps(value)))
 
     def export(self, course_id):
+        from tutor import export_turns
         course = self.course(course_id)
         course["job"] = None
         docs = self.docs(course_id)
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("folium.json", json.dumps(dict(version=1, course=course, documents=docs)))
+            z.writestr("folium.json", json.dumps(dict(version=1, course=course, documents=docs, tutor=export_turns(self, course_id))))
             for doc in docs:
                 z.write(self.document(doc["id"])[0], "documents/" + doc["id"] + ".pdf")
         return stream.getvalue()
@@ -352,7 +355,7 @@ class Store:
             backup = self.backup(course_id, "deleted")
             with self.db:
                 self.db.execute("DELETE FROM document_stats WHERE doc_id IN (SELECT id FROM documents WHERE course_id=?)", (course_id,))
-                for table in ("documents", "study_state", "course_summaries"):
+                for table in ("documents", "study_state", "course_summaries", "tutor_turns"):
                     self.db.execute(f"DELETE FROM {table} WHERE course_id=?" if table != "course_summaries" else "DELETE FROM course_summaries WHERE id=?", (course_id,))
                 self.db.execute("DELETE FROM courses WHERE id=?", (course_id,))
             pending = False
@@ -520,6 +523,8 @@ class Store:
                     for attempt in attempts:
                         if not isinstance(attempt,dict) or type(attempt.get("total")) is not int or type(attempt.get("correct")) is not int or not 1 <= attempt["total"] <= 100 or not 0 <= attempt["correct"] <= attempt["total"]:
                             raise ValueError("Invalid practice score in backup.")
+                from tutor import validate_backup, import_turns
+                tutor_rows = validate_backup(manifest.get("tutor", []), modules)
                 def remap(obj):
                     if isinstance(obj, dict):
                         return {k: id_map.get(v, v) if k == "doc_id" else remap(v) for k,v in obj.items()}
@@ -548,6 +553,7 @@ class Store:
                 for doc, raw in prepared:
                     self._save_doc(course["id"], doc, raw)
                 self.save(course)
+                import_turns(self, course["id"], tutor_rows)
                 return course
         except (KeyError, TypeError, zipfile.BadZipFile, json.JSONDecodeError, StopIteration) as exc:
             raise ValueError("This is not a valid Folium course backup.") from exc
