@@ -12,5 +12,5 @@ assert.doesNotMatch(highlightSettings('<img onerror=evil()>'),/<img/);
 for(const kind of FOLIO_CHARACTERS){assert.match(folioIcon(kind),/aria-hidden="true"/);assert.match(folioIcon(kind),new RegExp('folio-'+kind));}
 assert.equal(folioIcon('<script>'),folioIcon('sprout'));
 for(const motion of FOLIO_SPROUT_MOTIONS)assert.match(folioIcon('sprout',motion),new RegExp('folio-sprout-'+motion));
-assert.equal(folioIcon('sprout','"><script>'),folioIcon('sprout','hop'));
+assert.equal(folioIcon('sprout','"><script>'),folioIcon('sprout','curious'));
 console.log('Highlight opacity stays bounded, changes only paint alpha, and Folio character selection is safe.');

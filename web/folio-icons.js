@@ -1,7 +1,7 @@
 // Small local vector characters; no image downloads or animation libraries.
 export const FOLIO_CHARACTERS=['sprout','bookling','acorn'];
 export const FOLIO_SPROUT_MOTIONS=['hop','curious','leafcopter'];
-export function folioIcon(character='sprout',motion='hop'){
+export function folioIcon(character='sprout',motion='curious'){
   const face='<g class="folio-face"><g class="folio-eyes"><ellipse cx="25" cy="36" rx="1.6" ry="2.2"/><ellipse cx="38" cy="36" rx="1.6" ry="2.2"/></g><path class="folio-smile" d="M28 42q3.5 3 7 0"/><circle class="folio-cheek" cx="20" cy="40" r="2.3"/><circle class="folio-cheek" cx="43" cy="40" r="2.3"/></g>';
   const shapes={
     bookling:`<g class="folio-body"><path class="folio-paper" d="M12 12h30l10 9v32H15a5 5 0 0 1-5-5V17a5 5 0 0 1 2-5Z"/><path class="folio-soft" d="M12 12h7v41h-4a5 5 0 0 1-5-5V17a5 5 0 0 1 2-5Z"/><path class="folio-fold" d="M41 12v10h11"/><path class="folio-ribbon" d="M25 12h8v13l-4-3-4 3Z"/>${face}</g>`,
@@ -9,7 +9,7 @@ export function folioIcon(character='sprout',motion='hop'){
   };
   const kind=FOLIO_CHARACTERS.includes(character)?character:'sprout';
   if(kind==='sprout'){
-    const mood=FOLIO_SPROUT_MOTIONS.includes(motion)?motion:'hop';
+    const mood=FOLIO_SPROUT_MOTIONS.includes(motion)?motion:'curious';
     return `<svg class="folio-character folio-sprout folio-sprout-${mood}" viewBox="0 0 80 80" fill="none" aria-hidden="true">
       <ellipse class="folio-ground" cx="40" cy="73" rx="18" ry="3"/>
       <g class="folio-lift"><g class="folio-sprout-body">
