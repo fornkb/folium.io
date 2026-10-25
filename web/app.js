@@ -2,6 +2,7 @@ import * as UI from './ui.js';
 import {mountAnnotations} from './annotations.js';
 import {mountTutor} from './tutor.js';
 import {highlightOpacity,applyHighlightOpacity} from './appearance.js';
+import {sourceText} from './reader.js';
 const {esc,icon,link,enc}=UI;
 const $=(s,root=document)=>root.querySelector(s);
 const $$=(s,root=document)=>[...root.querySelectorAll(s)];
@@ -287,7 +288,7 @@ document.addEventListener('click',async event=>{
     if(action==='source')source(el.dataset.doc,el.dataset.page);
     if(action==='source-text'){
       const input=$('#source-page'),text=$('#source-text'),image=$('#source-image');
-      if(text.classList.contains('hidden')){const data=await api(`/documents/${input.dataset.doc}/pages/${input.value}`);text.textContent=(data.warning?data.warning+'\n\n':'')+('NATIVE PDF TEXT\n'+(data.text||'No native text is available.')+(data.recognized_text?'\n\nRECOGNIZED IMAGE TEXT · UNVERIFIED\n'+data.recognized_text:'')+(data.visual_description?'\n\nVISUAL INTERPRETATION · UNVERIFIED\n'+data.visual_description:''));$('#source-loading').classList.add('hidden');text.classList.remove('hidden');image.classList.add('hidden');el.textContent='View original page';}
+      if(text.classList.contains('hidden')){const data=await api(`/documents/${input.dataset.doc}/pages/${input.value}`);text.textContent=(data.warning?data.warning+'\n\n':'')+('NATIVE PDF TEXT\n'+sourceText(data.text||'No native text is available.')+(data.recognized_text?'\n\nRECOGNIZED IMAGE TEXT · UNVERIFIED\n'+data.recognized_text:'')+(data.visual_description?'\n\nVISUAL INTERPRETATION · UNVERIFIED\n'+data.visual_description:''));$('#source-loading').classList.add('hidden');text.classList.remove('hidden');image.classList.add('hidden');el.textContent='View original page';}
       else{text.classList.add('hidden');image.classList.remove('hidden');el.textContent='Read extracted text';}
     }
     if(action==='course-view'){state.view=el.dataset.view;state.zoom=null;render();}

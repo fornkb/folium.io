@@ -1,6 +1,31 @@
 // Only our Markdown vocabulary and KaTeX's untrusted-input renderer produce HTML.
 export const escapeText = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// Legacy Symbol/Wingdings glyphs in native PDF text. Keep this a display-only,
+// explicit map: unknown private-use characters and saved quotations stay intact.
+const sourceGlyphs={'\uf06e':'•','\uf0d8':'¬','\uf0de':'⇒','\uf0d9':'∧','\uf0da':'∨','\uf0db':'⇔','\uf022':'∀','\uf024':'∃'};
+export function sourceText(text){
+  return String(text??'').replace(/[\uf06e\uf0d8-\uf0db\uf0de\uf022\uf024]/g,char=>sourceGlyphs[char]);
+}
+export function renderSourceText(text){
+  // Native PDF lines can wrap midway through a bullet, or flatten several
+  // bullets together. Group by the actual slide marker, keeping wrapped words.
+  const parts=String(text??'').split('\uf06e'),intro=renderText(sourceText(parts.shift()));
+  if(!parts.length)return intro;
+  return intro+`<ul>${parts.filter(part=>part.trim()).map(part=>{
+    let content=renderText(sourceText(part.trim()));
+    if(/^<p>(?:(?!<p>|<\/p>)[\s\S])*<\/p>$/.test(content))content=content.slice(3,-4);
+    return `<li>${content}</li>`;
+  }).join('')}</ul>`;
+}
+
+function legacySteps(text){
+  const steps=[...text.matchAll(/(?:^|\s+)Step ([1-9]\d*):(?=\s)/g)];
+  if(steps.length<2||steps[0].index!==0||text.includes('`')||text.includes('\\(')||
+      !steps.every((step,i)=>Number(step[1])===i+1))return null;
+  return steps.map((step,i)=>`<p><strong>Step ${step[1]}:</strong> ${inlineText(text.slice(step.index+step[0].length,steps[i+1]?.index).trim())}</p>`).join('');
+}
+
 export function math(text, display=false){
   if(!globalThis.katex || text.length>20000)return `<code class="math-fallback">${escapeText(text)}</code>`;
   try{return globalThis.katex.renderToString(text,{displayMode:display,throwOnError:true,trust:false,strict:'ignore',maxExpand:500,maxSize:10,output:'htmlAndMathml'});}
@@ -25,8 +50,7 @@ export function inlineText(text,depth=0){
 
 export function renderText(text,depth=0){
   if(depth>12)return `<p>${escapeText(text)}</p>`;
-  // Older saved lessons sometimes place an entire numbered derivation on one line.
-  text=String(text||'').replace(/\r\n?/g,'\n').replace(/([^\n])\s+(Step \d+[:.])/g,'$1\n\n**$2**');
+  text=String(text||'').replace(/\r\n?/g,'\n');
   const lines=text.split('\n');let out='',i=0;
   const bullet=line=>/^\s*(?:[-*•]|\d+[.)])\s+/.test(line);
   const special=line=>/^\s*(?:#{1,6}\s|```|>|\\\[|\$\$)/.test(line)||bullet(line);
@@ -84,7 +108,9 @@ export function renderText(text,depth=0){
     if(line.startsWith('>')){out+=`<blockquote>${inlineText(line.replace(/^>\s?/,''))}</blockquote>`;i++;continue;}
     const paragraph=[line];i++;
     while(i<lines.length&&lines[i].trim()&&!special(lines[i])&&!(lines[i].includes('|')&&i+1<lines.length&&/---/.test(lines[i+1])))paragraph.push(lines[i++].trim());
-    out+=`<p>${paragraph.map(s=>inlineText(s)).join(' ')}</p>`;
+    // Recover only plain, sequential step lists; headings, code, mathematics and
+    // references such as "the result of Step 3." keep their original structure.
+    out+=legacySteps(paragraph.join(' '))??`<p>${paragraph.map(s=>inlineText(s)).join(' ')}</p>`;
   }
   return out;
 }
