@@ -17,8 +17,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pypdf import PdfReader
+from annotations import validate_marks
 
-STUDY_FIELDS = ("read", "bookmarked", "notes", "attempts", "question_evidence")
+STUDY_FIELDS = ("read", "bookmarked", "notes", "attempts", "question_evidence", "annotations")
 
 
 @contextmanager
@@ -174,9 +175,9 @@ class Store:
             row = self.db.execute("SELECT s.data FROM course_summaries s JOIN courses c ON c.id=s.id WHERE s.id=?", (course_id,)).fetchone()
             return json.loads(row[0]) if row else self._write_summary(self.course(course_id))
 
-    def study_patch(self, course, module_id):
+    def study_patch(self, course, module_id, *, fields=None):
         module = next(m for m in course["modules"] if m["id"] == module_id)
-        row = {key: module[key] for key in STUDY_FIELDS if key in module}
+        row = {key: module[key] for key in (STUDY_FIELDS if fields is None else fields) if key in module}
         row.update(id=module_id, state=module_state(module), evidence=assessment_evidence(module))
         return dict(id=course["id"], updated=course["updated"], study_patch=True, modules=[row],
                     reviews={key: value for key, value in course.get("reviews", {}).items() if key.startswith(module_id+":")})
@@ -506,6 +507,8 @@ class Store:
                     except (KeyError,TypeError,ValueError):
                         raise ValueError("Invalid review date in backup.") from None
                 for old in original["modules"]:
+                    if "annotations" in old:
+                        validate_marks(old["annotations"], old)
                     evidence = old.get("question_evidence")
                     if evidence is not None and (not isinstance(evidence,dict) or not isinstance(evidence.get("version"),str) or not isinstance(evidence.get("first"),dict) or len(evidence["first"])>100 or any(not isinstance(key,str) or type(value) is not bool for key,value in evidence["first"].items())):
                         raise ValueError("Invalid first-encounter evidence in backup.")
@@ -532,7 +535,7 @@ class Store:
                 if original.get("scope_review"):
                     course["scope_review"] = review_signature(course["modules"], course.get("scope_exclusions", []), course["scope"]["fingerprint"])
                 for module, old in zip(course["modules"], original["modules"]):
-                    for field in ("read", "bookmarked", "notes", "attempts", "question_evidence"):
+                    for field in STUDY_FIELDS:
                         if field in old:
                             module[field] = old[field]
                 course["status"] = "ready" if original.get("status") == "ready" and modules and all(m.get("package") for m in modules) else "outline" if modules else "uploaded"

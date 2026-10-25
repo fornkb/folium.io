@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import {anchorFor,resolveAnchor,signature} from '../web/annotations.js';
+
+const text='A statement with bold words, an equation ∀x P(x), and an emoji 😀 at the end.';
+const start=text.indexOf('bold'),end=text.indexOf(', and');
+const anchor=anchorFor(text,'section:0',start,end);
+assert.equal(anchor.exact,'bold words, an equation ∀x P(x)');
+assert.deepEqual(resolveAnchor(text,anchor),[start,end]);
+const moved='A new introductory sentence. '+text;
+assert.deepEqual(resolveAnchor(moved,anchor),[moved.indexOf('bold'),moved.indexOf(', and')]);
+assert.equal(resolveAnchor(text.replace('∀x P(x)','∃x P(x)'),anchor),null,'Changed formulas must not silently receive old marks.');
+assert.equal(resolveAnchor(text.replace('bold words','Bold words'),anchor),null,'Anchors preserve case.');
+assert.equal(anchorFor('    ','intro',0,4),null);
+assert.equal(anchorFor('  text  ','intro',0,8).exact,'text');
+const emoji=anchorFor('A😀B','intro',1,3);
+assert.equal(emoji.exact,'😀');assert.equal(emoji.end-emoji.start,2);
+const repeated='prefix '.repeat(6)+'important phrase'+' suffix'.repeat(6);
+const at=repeated.indexOf('important');
+const ambiguous=anchorFor(repeated,'section:0',at,at+'important phrase'.length);
+assert.equal(resolveAnchor(repeated+' separator '+repeated,ambiguous),null,'Ambiguous changed text must not guess a location.');
+assert.notEqual(signature(text),signature(text+' changed'));
+console.log('Text anchors preserve Unicode, exact wording, context and safe reattachment; changed or ambiguous passages remain unplaced.');

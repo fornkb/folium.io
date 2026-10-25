@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from annotations import update_marks
 import json
 import mimetypes
 import os
@@ -217,7 +218,7 @@ def create_server(data_dir, port=8765, env_file=None):
                     course["warnings"] = warnings
                     store.save(course)
                     return self.send(201, self.public(course["id"]))
-                match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/(delete|visual|outline|extend|prepare|modules/([^/]+)/(progress|quiz|review))", path)
+                match = re.fullmatch(r"/api/courses/([a-f0-9]{16})/(delete|visual|outline|extend|prepare|modules/([^/]+)/(progress|annotations|quiz|review))", path)
                 if match:
                     cid, action, mid, subaction = match[1], match[2], match[3], match[4]
                     course = store.course(cid)
@@ -262,21 +263,27 @@ def create_server(data_dir, port=8765, env_file=None):
                         return self.send(200, self.public(cid))
                     if not any(m["id"] == mid for m in course["modules"]):
                         raise ValueError("Module not found.")
-                    result = {}
+                    result, changed = {}, set()
                     def mutate(c):
                         module = next(m for m in c["modules"] if m["id"] == mid)
                         if subaction == "progress":
                             for flag in ("read", "bookmarked"):
                                 if flag in body:
                                     module[flag] = bool(body[flag])
+                                    changed.add(flag)
                             if "notes" in body:
                                 module["notes"] = clean(body["notes"], 30000)
+                                changed.add("notes")
+                        elif subaction == "annotations":
+                            module["annotations"] = update_marks(module, body)
+                            changed.add("annotations")
                         elif subaction == "quiz":
                             result.update(grade(module, body.get("answers", {}), body.get("question_ids")))
+                            changed.update(("attempts", "question_evidence"))
                         elif subaction == "review":
                             result.update(review_card(c, mid, int(body.get("index", -1)), body.get("rating")))
                     updated = store.update(cid, mutate, study_module=mid)
-                    return self.send(200, dict(course=store.study_patch(updated, mid), result=result))
+                    return self.send(200, dict(course=store.study_patch(updated, mid, fields=changed), result=result))
                 self.send(404, dict(error="This action could not be found."))
             except PermissionError as exc:
                 self.send(403, dict(error=str(exc)))

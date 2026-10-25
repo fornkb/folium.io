@@ -1,4 +1,5 @@
 import * as UI from './ui.js';
+import {mountAnnotations} from './annotations.js';
 const {esc,icon,link,enc}=UI;
 const $=(s,root=document)=>root.querySelector(s);
 const $$=(s,root=document)=>[...root.querySelectorAll(s)];
@@ -6,10 +7,12 @@ const state={courses:[],settings:{has_key:false,model:'gemini-3.8-flash',task_mo
   files:[],draft:[],draftCid:null,scopeExclusions:[],scopeGapsAccepted:false,review:null,quizzes:{},theme:localStorage.getItem('folium-theme')||'light',
   current:{},allowPrepared:null,previousRoute:'',notesPending:null,lastDeletion:null};
 let toastTimer,notesTimer,lastFocus,notesFlight=null;
+let annotationReader=null;
 
-async function api(path,body){
+async function api(path,body,extra={}){
   const options=body===undefined?{}:body instanceof FormData?{method:'POST',body}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
   let response;
+  Object.assign(options,extra);
   try{response=await fetch('/api'+path,options);}catch{throw new Error('The local app could not be reached. Check that Folium is still running.');}
   const value=await response.json();
   if(!response.ok)throw new Error(value.error||'Something could not be saved. Please try again.');
@@ -54,6 +57,7 @@ function shell(body,pageTitle='My courses',active='courses',cid=null){
 }
 
 function render(){
+  annotationReader?.destroy();annotationReader=null;
   const openScopeDetails=$$('details[data-scope-detail][open]').map(d=>d.dataset.scopeDetail);
   const r=route();let body,title='My courses',active='courses',cid=null;
   state.current={};document.body.classList.toggle('dark',state.theme==='dark');
@@ -96,6 +100,16 @@ function render(){
   }else{body=(state.lastDeletion?UI.deletionReceipt(state.lastDeletion):'')+UI.library(state.courses);}
   document.title=`${title} — Folium`;
   $('#app').innerHTML=shell(body,title,active,cid);
+  if(state.current.tab==='study'&&state.current.m?.package&&$('.lesson-paper')){
+    const cid=state.current.c.id,mid=state.current.m.id;
+    annotationReader=mountAnnotations($('.lesson-paper'),{annotations:state.current.m.annotations||[],onError:error=>toast(error.message,true),
+      save:async operation=>{
+        const value=await api(`/courses/${cid}/modules/${enc(mid)}/annotations`,operation,{keepalive:true});
+        const course=updateCourse(value.course),marks=course?.modules.find(m=>m.id===mid)?.annotations||[];
+        if(state.current.c?.id===cid&&state.current.m?.id===mid)annotationReader?.refresh(marks);
+        return marks;
+      }});
+  }
   for(const id of openScopeDetails){const detail=$(`details[data-scope-detail="${CSS.escape(id)}"]`);if(detail)detail.open=true;}
   document.body.classList.remove('map-open');
   requestAnimationFrame(applyGraphZoom);
