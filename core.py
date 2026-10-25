@@ -591,7 +591,7 @@ def validate_outline(modules):
     return result
 
 
-def validate_teaching(pkg, allowed):
+def validate_teaching(pkg, allowed, *, normalize_generated_sources=False):
     if not isinstance(pkg, dict) or not clean(pkg.get("overview")):
         raise ValueError("The generated lesson is incomplete. Resume to retry this module.")
     if not isinstance(pkg.get("sections"), list) or not pkg["sections"]:
@@ -612,13 +612,18 @@ def validate_teaching(pkg, allowed):
             raise ValueError("Invalid lesson citation list.")
         if "provenance" in sec and sec["provenance"] not in ("generated", "source_excerpt"):
             raise ValueError("Invalid lesson provenance.")
-        if sec.get("provenance") == "generated" and sec.get("sources"):
-            raise ValueError("Generated teaching cannot carry source-support citations.")
         if sec.get("provenance") == "source_excerpt" and not sec.get("sources"):
             raise ValueError("A source excerpt needs a citation.")
         for ref in sec.get("sources", []):
             if not isinstance(ref, dict) or type(ref.get("page")) is not int or (ref.get("doc_id"), ref.get("page")) not in allowed:
                 raise ValueError("A generated citation did not match a supplied source page. Resume to retry.")
+        if sec.get("provenance") == "generated" and sec.get("sources"):
+            if not normalize_generated_sources:
+                raise ValueError("Generated teaching cannot carry source-support citations.")
+            # A model may attach topic-location references to its own explanation.
+            # Remove that support claim without changing its words or provenance.
+            # Generation opts in; saved packages and imports remain strict.
+            sec["sources"] = []
     if not isinstance(pkg.get("coverage_notes", ""), str):
         raise ValueError("Invalid teaching coverage notes.")
     return pkg
@@ -662,8 +667,8 @@ def validate_assessment(pkg, topics=None):
     return pkg
 
 
-def validate_package(pkg, allowed):
-    validate_teaching(pkg, allowed)
+def validate_package(pkg, allowed, *, normalize_generated_sources=False):
+    validate_teaching(pkg, allowed, normalize_generated_sources=normalize_generated_sources)
     status = pkg.get("assessment_status")
     if status not in (None, "missing", "ready"):
         raise ValueError("Invalid practice preparation state.")

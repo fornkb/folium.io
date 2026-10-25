@@ -92,6 +92,24 @@ class KeyRotationTests(unittest.TestCase):
         self.assertEqual(["test-one", "test-two", "test-three", "test-one"], self.seen)
         self.assertEqual(4, self.request.call_count)
 
+    def test_transient_errors_preserve_the_exact_http_status(self):
+        for status in (500, 502, 503, 504):
+            with self.subTest(status=status):
+                self.request.side_effect = urllib.error.HTTPError("", status, "provider error", {}, None)
+                with self.assertRaisesRegex(ProviderError, "HTTP " + str(status)):
+                    self.generate("transient " + str(status))
+        self.assertEqual(4, self.request.call_count)
+
+    def test_socket_timeouts_are_distinguished_from_connection_failures(self):
+        for error in (TimeoutError(), urllib.error.URLError(TimeoutError())):
+            self.request.side_effect = error
+            with self.assertRaisesRegex(ProviderError, "timed out"):
+                self.generate("timeout")
+        self.request.side_effect = OSError("connection failed")
+        with self.assertRaisesRegex(ProviderError, "could not be reached"):
+            self.generate("connection")
+        self.assertEqual(3, self.request.call_count)
+
     def test_all_quota_limited_keys_are_tried_once_then_pause(self):
         def fail(request, **kwargs):
             self.seen.append(request.get_header("X-goog-api-key"))

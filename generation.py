@@ -165,7 +165,7 @@ class Gemini:
                     break
                 except urllib.error.HTTPError as exc:
                     if exc.code in (500, 502, 503, 504):
-                        raise ProviderError("Gemini is temporarily busy or unavailable. Completed lessons are saved. Wait a moment, then select Resume.") from None
+                        raise ProviderError(f"Gemini returned HTTP {exc.code}: temporarily busy or unavailable. Completed lessons are saved. Wait a moment, then select Resume.") from None
                     if exc.code == 429:
                         if set(keys) - attempted:
                             continue
@@ -175,7 +175,9 @@ class Gemini:
                     if exc.code == 404:
                         raise ProviderError("This Gemini model is unavailable. Choose a model available to your project in Settings.") from None
                     raise ProviderError(f"Gemini returned HTTP {exc.code}. Completed work is saved; resume to retry.") from None
-                except (TimeoutError, OSError):
+                except (TimeoutError, OSError) as exc:
+                    if isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
+                        raise ProviderError("Gemini's response timed out after 240 seconds of waiting. Completed work is saved; resume to retry.") from None
                     raise ProviderError("Gemini could not be reached. Check your connection, then resume. Completed work is saved.") from None
             else:
                 raise ProviderError("The configured Gemini keys reached their quota or rate limit. Completed work is saved; wait before resuming.")
@@ -751,7 +753,8 @@ class Jobs:
                     # Preserve unfinished legacy jobs that already saved combined packages.
                     prompt += "\nLegacy combined package: also return practice and cards using these rules.\n" + ASSESSMENT_INSTRUCTIONS
                 def validate(value):
-                    value = validate_teaching(value, allowed) if teaching_only else validate_package(value, allowed)
+                    value = (validate_teaching(value, allowed, normalize_generated_sources=scoped) if teaching_only
+                             else validate_package(value, allowed, normalize_generated_sources=scoped))
                     if not teaching_only:
                         validate_assessment(value, lesson["topics"])
                     if scoped:

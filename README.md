@@ -86,7 +86,11 @@ This initial scope pass may require more requests than the former sampled outlin
 
 On explicit resume, a complete saved raw response is checked with the current validator before making another request. It is reused only if validation succeeds. Truncated, blocked, malformed, or still-invalid responses require a fresh request; there is no automatic retry loop. Provider-cache recovery is local to the workspace and is not included in course ZIPs.
 
+During scoped lesson generation, a section explicitly labelled as generated teaching may arrive with topic-location citations. After checking those references against the supplied pages, the server removes the citation support claim and preserves the explanation's wording and generated label. Approved topic locations remain separate. Exact-quotation sections keep their required citations and strict text matching; invalid source IDs/pages, missing provenance, saved-package validation and backup imports remain strict. This metadata normalization lets a complete cached lesson resume without requesting a rewrite.
+
 If preparation pauses because of a quota, connection failure, or restart, resume it explicitly. Completed stages are reused. Existing saved lessons are preserved when prompts change; improved prompts apply to newly generated content. Unfinished legacy jobs retain their combined-package schema and reuse their completed lessons. Reading, navigation, quizzes, solution reveals, notes, and card reviews make **no AI requests**.
+
+Transient provider errors show the actual HTTP status (500/502/503/504). Socket response timeouts are distinguished from other connection failures; the socket wait is 240 seconds and is not a total end-to-end job deadline. Earlier generic pause messages do not retain the underlying exception or status history after Resume.
 
 ## Data and privacy
 
